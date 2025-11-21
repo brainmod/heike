@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, Instant, Duration};
 use chrono::{DateTime, Local};
 use std::env;
+use std::io::Read; // Import Read for text previews
 
 // --- Data Structures ---
 
@@ -44,7 +45,7 @@ struct RustyYazi {
     last_g_press: Option<Instant>,
     show_command_palette: bool,
     command_buffer: String,
-    focus_command_input: bool, // Signal to focus the text box
+    focus_command_input: bool,
 }
 
 impl Default for RustyYazi {
@@ -175,7 +176,6 @@ impl RustyYazi {
                         self.error_message = Some(format!("mkdir failed: {}", e));
                     } else {
                         self.refresh_entries();
-                        // Auto-select new dir
                         if let Some(idx) = self.entries.iter().position(|e| e.path == new_dir) {
                             self.selected_index = Some(idx);
                         }
@@ -206,14 +206,12 @@ impl RustyYazi {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
-        // 1. Global Toggle for Command Palette
         if !self.show_command_palette && ctx.input(|i| i.key_pressed(egui::Key::Colon)) {
             self.show_command_palette = true;
             self.focus_command_input = true;
             return;
         }
 
-        // 2. If Command Palette is open, don't do file navigation
         if self.show_command_palette {
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.show_command_palette = false;
@@ -225,7 +223,6 @@ impl RustyYazi {
             return; 
         }
 
-        // 3. Navigation Logic (Vim + Arrows)
         if self.entries.is_empty() {
              if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) {
                 self.navigate_up();
@@ -237,24 +234,20 @@ impl RustyYazi {
         let max_idx = self.entries.len() - 1;
         let current = self.selected_index.unwrap_or(0);
 
-        // DOWN: j or ArrowDown
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J)) {
             self.selected_index = Some((current + 1).min(max_idx));
             changed = true;
         }
 
-        // UP: k or ArrowUp
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K)) {
             self.selected_index = Some(current.saturating_sub(1));
             changed = true;
         }
 
-        // PARENT: h or Backspace
         if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) {
             self.navigate_up();
         }
 
-        // ENTER/CHILD: l or Enter
         if ctx.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::L)) {
             if let Some(idx) = self.selected_index {
                 if let Some(entry) = self.entries.get(idx) {
@@ -264,20 +257,17 @@ impl RustyYazi {
             }
         }
 
-        // BOTTOM: G (Shift+G)
         if ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.shift) {
             self.selected_index = Some(max_idx);
             changed = true;
         }
 
-        // TOP: gg (double tap g)
         if ctx.input(|i| i.key_pressed(egui::Key::G) && !i.modifiers.shift) {
             let now = Instant::now();
             if let Some(last) = self.last_g_press {
                 if now.duration_since(last) < Duration::from_millis(500) {
-                    // Double tap detected
                     self.selected_index = Some(0);
-                    self.last_g_press = None; // Reset
+                    self.last_g_press = None;
                     changed = true;
                 } else {
                     self.last_g_press = Some(now);
@@ -287,11 +277,82 @@ impl RustyYazi {
             }
         }
 
-        // Reset g timer if too much time passes
         if let Some(last) = self.last_g_press {
             if Instant::now().duration_since(last) > Duration::from_millis(500) {
                 self.last_g_press = None;
             }
+        }
+    }
+
+    // --- Phase 3: Preview Renderer ---
+    fn render_preview(&self, ui: &mut egui::Ui) {
+        let idx = match self.selected_index {
+            Some(i) => i,
+            None => {
+                ui.centered_and_justified(|ui| { ui.label("No file selected"); });
+                return;
+            }
+        };
+
+        let entry = match self.entries.get(idx) {
+            Some(e) => e,
+            None => return,
+        };
+
+        // Header
+        ui.heading(&entry.name);
+        ui.add_space(5.0);
+        ui.label(format!("Size: {}", bytesize::ByteSize(entry.size)));
+        let datetime: DateTime<Local> = entry.modified.into();
+        ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
+        ui.separator();
+
+        if entry.is_dir {
+            ui.centered_and_justified(|ui| { ui.label("📁 Directory"); });
+            return;
+        }
+
+        // 1. Image Preview
+        if let Some(ext) = entry.path.extension() {
+            let ext_str = ext.to_string_lossy().to_lowercase();
+            if matches!(ext_str.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") {
+                // egui_extras requires "file://" prefix for local paths
+                let uri = format!("file://{}", entry.path.display());
+                
+                egui::ScrollArea::vertical().id_salt("preview_img").show(ui, |ui| {
+                    ui.add(egui::Image::new(uri).max_width(ui.available_width()));
+                });
+                return;
+            }
+        }
+
+        // 2. Text Preview (First 2KB)
+        // Note: Synchronous read is acceptable for Phase 3, but Phase 4 will improve this.
+        match fs::File::open(&entry.path) {
+            Ok(mut file) => {
+                let mut buffer = [0u8; 2048]; 
+                match file.read(&mut buffer) {
+                    Ok(n) if n > 0 => {
+                        // Attempt to parse as UTF-8
+                        match std::str::from_utf8(&buffer[..n]) {
+                            Ok(text) => {
+                                egui::ScrollArea::vertical().id_salt("preview_text").show(ui, |ui| {
+                                    ui.monospace(text);
+                                    if n == 2048 {
+                                        ui.colored_label(egui::Color32::YELLOW, "\n--- Preview Truncated ---");
+                                    }
+                                });
+                            }
+                            Err(_) => { 
+                                ui.centered_and_justified(|ui| { ui.label("binary content"); });
+                            }
+                        }
+                    }
+                    Ok(_) => { ui.label("Empty File"); }
+                    Err(e) => { ui.colored_label(egui::Color32::RED, format!("Read error: {}", e)); }
+                }
+            }
+            Err(e) => { ui.colored_label(egui::Color32::RED, format!("Open error: {}", e)); }
         }
     }
 }
@@ -300,7 +361,6 @@ impl eframe::App for RustyYazi {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_input(ctx);
 
-        // Deferred actions
         let next_navigation = std::cell::RefCell::new(None);
         let next_selection = std::cell::RefCell::new(None);
 
@@ -312,7 +372,6 @@ impl eframe::App for RustyYazi {
                     self.navigate_up();
                 }
                 
-                // Breadcrumbs
                 ui.add_space(10.0);
                 let components: Vec<_> = self.current_path.components().collect();
                 let mut path_acc = PathBuf::new();
@@ -320,7 +379,6 @@ impl eframe::App for RustyYazi {
                 for component in components {
                     path_acc.push(component);
                     let name = component.as_os_str().to_string_lossy();
-                    // Special case for root on windows/unix
                     let label = if name.is_empty() { "/" } else { &name };
                     
                     if ui.button(label).clicked() {
@@ -368,31 +426,15 @@ impl eframe::App for RustyYazi {
             });
         });
 
-        egui::SidePanel::right("preview_panel").resizable(true).default_width(300.0).show(ctx, |ui| {
+        egui::SidePanel::right("preview_panel").resizable(true).default_width(350.0).show(ctx, |ui| {
             ui.add_space(4.0);
             ui.vertical_centered(|ui| { ui.heading("Preview"); });
             ui.separator();
-            if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.entries.get(idx) {
-                    ui.label(egui::RichText::new(&entry.name).strong().size(20.0));
-                    ui.add_space(10.0);
-                    ui.label(format!("Size: {}", bytesize::ByteSize(entry.size)));
-                    let datetime: DateTime<Local> = entry.modified.into();
-                    ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
-                    ui.add_space(20.0);
-                    if entry.is_dir {
-                        ui.label("📁 Directory");
-                    } else {
-                        ui.label("📄 File Content (TODO)");
-                    }
-                }
-            } else {
-                ui.centered_and_justified(|ui| { ui.label("No file selected"); });
-            }
+            // Call new helper
+            self.render_preview(ui);
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-             // Command Palette Overlay
             if self.show_command_palette {
                 let area = egui::Area::new("command_palette".into())
                     .anchor(egui::Align2::CENTER_TOP, [0.0, 50.0])
@@ -451,9 +493,17 @@ impl eframe::App for RustyYazi {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1000.0, 600.0])
+            .with_inner_size([1200.0, 700.0]) // Slightly larger for previews
             .with_title("Rusty Yazi"),
         ..Default::default()
     };
-    eframe::run_native("Rusty Yazi", options, Box::new(|_cc| Ok(Box::new(RustyYazi::default()))))
+    eframe::run_native(
+        "Rusty Yazi",
+        options,
+        Box::new(|cc| {
+            // IMPORTANT: Install image loaders for Phase 3
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+            Ok(Box::new(RustyYazi::default()))
+        }),
+    )
 }

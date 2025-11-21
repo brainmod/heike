@@ -46,11 +46,11 @@ Replace the text edit path bar with clickable breadcrumbs (e.g., ~ > Code > Rust
 
 Implement a pop-up modal (triggered by :) for commands like quit, mkdir, touch.
 
-Phase 3: High-Performance Previews
+Phase 3: High-Performance Previews ✅
 
 One of Yazi's best features is checking file content without opening it.
 
-[ ] Image Preview:
+[x] Image Preview:
 
 Integrate egui_extras image loaders.
 
@@ -58,13 +58,13 @@ Load images asynchronously to prevent UI freeze.
 
 Resize images to fit the right pane while maintaining aspect ratio.
 
-[ ] Text/Code Preview:
+[x] Text/Code Preview:
 
 Read the first N lines of the selected text file.
 
 (Optional) Add syntax highlighting (using syntect crate later).
 
-[ ] Binary/Unknown:
+[x] Binary/Unknown:
 
 Show a hex dump or a "Binary File" placeholder for non-text files.
 
