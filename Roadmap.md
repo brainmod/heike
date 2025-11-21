@@ -1,34 +1,34 @@
 Rusty Yazi Roadmap
 
-Phase 1: The "Miller Column" Layout (Visual Structure)
+Phase 1: The "Miller Column" Layout (Visual Structure) ✅
 
 Yazi uses a 3-pane layout: Parent Directory (Left) -> Current Directory (Center) -> Preview (Right).
 
-[ ] Refactor Layout: Split the central panel into three distinct sections using egui::SidePanel or ui.columns(3).
+[x] Refactor Layout: Split the central panel into three distinct sections using egui::SidePanel or ui.columns(3).
 
-[ ] Parent Pane (Left):
+[x] Parent Pane (Left):
 
 Display the contents of current_path.parent().
 
 Render it with lower opacity or "dimmed" text to indicate it is context.
 
-[ ] Current Pane (Center):
+[x] Current Pane (Center):
 
 Keep the current Table logic here.
 
 Ensure this pane has keyboard focus by default.
 
-[ ] Preview Pane (Right):
+[x] Preview Pane (Right):
 
 Create a placeholder area that updates whenever selected_index changes.
 
 Initially just show the file name and basic metadata (size, permissions).
 
-Phase 2: The "Yazi Feel" (Vim Navigation)
+Phase 2: The "Yazi Feel" (Vim Navigation) ✅
 
 Yazi is keyboard-centric. Mouse support is secondary.
 
-[ ] Vim Bindings:
+[x] Vim Bindings:
 
 Map j / k to Arrow Down / Arrow Up.
 
@@ -38,11 +38,11 @@ Map l to Enter Directory (Right) or Open File.
 
 Map gg to Top, G to Bottom.
 
-[ ] Breadcrumb Navigation:
+[x] Breadcrumb Navigation:
 
 Replace the text edit path bar with clickable breadcrumbs (e.g., ~ > Code > Rust > rusty_yazi).
 
-[ ] Command Palette:
+[x] Command Palette:
 
 Implement a pop-up modal (triggered by :) for commands like quit, mkdir, touch.
 
@@ -105,13 +105,3 @@ Batch operations: Bulk Delete, Bulk Move.
 [ ] File Icons:
 
 Integrate a Nerd Font or an icon crate to show specific icons for .rs, .toml, .js, etc.
-
-Technical dependencies to investigate
-
-image: For processing previews.
-
-syntect: For code syntax highlighting.
-
-crossbeam-channel: For async communication.
-
-nucleo-matcher: For fuzzy finding.
