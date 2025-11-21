@@ -1547,6 +1547,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "heike"
+version = "0.6.0"
+dependencies = [
+ "bytesize",
+ "chrono",
+ "directories",
+ "eframe",
+ "egui_extras",
+ "open",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2885,18 +2897,6 @@ name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
-
-[[package]]
-name = "rusty_yazi"
-version = "0.1.0"
-dependencies = [
- "bytesize",
- "chrono",
- "directories",
- "eframe",
- "egui_extras",
- "open",
-]
 
 [[package]]
 name = "same-file"

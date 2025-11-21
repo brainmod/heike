@@ -109,7 +109,7 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
 
 // --- Main App Struct ---
 
-struct RustyYazi {
+struct Heike {
     // Core State
     current_path: PathBuf,
     history: Vec<PathBuf>,
@@ -145,7 +145,7 @@ struct RustyYazi {
     result_rx: Receiver<IoResult>,
 }
 
-impl RustyYazi {
+impl Heike {
     fn new(ctx: egui::Context) -> Self {
         let start_path = directories::UserDirs::new()
             .map(|ud| ud.home_dir().to_path_buf())
@@ -333,7 +333,7 @@ impl RustyYazi {
                         if let Err(e) = fs::rename(src, &dest) { errors.push(format!("Move dir failed: {}", e)); }
                         else { count += 1; }
                     } else {
-                        errors.push("Copying directories not supported in Rusty Yazi (lite)".into());
+                        errors.push("Copying directories not supported in  Heike (lite)".into());
                     }
                 } else {
                     if op == ClipboardOp::Copy {
@@ -622,7 +622,7 @@ impl RustyYazi {
     }
 }
 
-impl eframe::App for RustyYazi {
+impl eframe::App for Heike {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_async_results();
         self.handle_input(ctx);
@@ -803,6 +803,6 @@ fn main() -> eframe::Result<()> {
     };
     eframe::run_native(
         "Heike", options,
-        Box::new(|cc| { egui_extras::install_image_loaders(&cc.egui_ctx); Ok(Box::new(RustyYazi::new(cc.egui_ctx.clone()))) }),
+        Box::new(|cc| { egui_extras::install_image_loaders(&cc.egui_ctx); Ok(Box::new(Heike::new(cc.egui_ctx.clone()))) }),
     )
 }

@@ -1,6 +1,6 @@
 [package]
-name = "rusty_yazi"
-version = "0.1.0"
+name = "heike"
+version = "0.6.0"
 edition = "2021"
 
 [dependencies]
