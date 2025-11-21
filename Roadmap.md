@@ -86,9 +86,9 @@ Show a spinner while the directory is being read.
 
 Don't load the preview instantly if the user is scrolling fast. Wait for the selection to settle for 200ms.
 
-Phase 5: "Power User" Features
+Phase 5: "Power User" Features ✅
 
-[ ] Fuzzy Finding:
+[x] Fuzzy Finding:
 
 Trigger with f or /.
 
@@ -96,12 +96,12 @@ Pop up a search box that filters the current list in real-time.
 
 Use a fuzzy matching crate like nucleo-matcher or fuzzy-matcher.
 
-[ ] Selection Mode:
+[x] Selection Mode:
 
 Allow selecting multiple files (visual mode v).
 
 Batch operations: Bulk Delete, Bulk Move.
 
-[ ] File Icons:
+[x] File Icons:
 
 Integrate a Nerd Font or an icon crate to show specific icons for .rs, .toml, .js, etc.
