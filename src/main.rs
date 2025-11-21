@@ -18,7 +18,7 @@ struct FileEntry {
     is_dir: bool,
     size: u64,
     modified: SystemTime,
-    extension: String, // Cached for icons
+    extension: String,
 }
 
 impl FileEntry {
@@ -40,25 +40,15 @@ impl FileEntry {
     }
 
     fn get_icon(&self) -> &str {
-        if self.is_dir {
-            return "📁";
-        }
+        if self.is_dir { return "📁"; }
         match self.extension.as_str() {
-            "rs" => "🦀",
-            "toml" => "⚙️",
-            "md" => "📝",
-            "txt" => "📄",
+            "rs" => "🦀", "toml" => "⚙️", "md" => "📝", "txt" => "📄",
             "png" | "jpg" | "jpeg" | "gif" | "webp" => "🖼️",
-            "mp4" | "mkv" | "mov" => "🎬",
-            "mp3" | "wav" | "flac" => "🎵",
-            "zip" | "tar" | "gz" | "7z" | "rar" => "📦",
-            "py" => "🐍",
-            "js" | "ts" | "jsx" | "tsx" => "📜",
-            "html" | "css" => "🌐",
-            "json" | "yaml" | "yml" | "xml" => "📋",
-            "pdf" => "📕",
-            "exe" | "msi" | "bat" | "sh" => "🚀",
-            _ => "📄",
+            "mp4" | "mkv" | "mov" => "🎬", "mp3" | "wav" | "flac" => "🎵",
+            "zip" | "tar" | "gz" | "7z" | "rar" => "📦", "py" => "🐍",
+            "js" | "ts" | "jsx" | "tsx" => "📜", "html" | "css" => "🌐",
+            "json" | "yaml" | "yml" | "xml" => "📋", "pdf" => "📕",
+            "exe" | "msi" | "bat" | "sh" => "🚀", _ => "📄",
         }
     }
 }
@@ -68,70 +58,45 @@ impl FileEntry {
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum AppMode {
     Normal,
-    Visual,   // Multi-select
-    Filtering, // Fuzzy search
-    Command,  // : command
+    Visual,
+    Filtering,
+    Command,
+    Help, // New Mode
 }
 
 // --- Async Architecture ---
 
-enum IoCommand {
-    LoadDirectory(PathBuf, bool), 
-    LoadParent(PathBuf, bool),   
-}
-
-enum IoResult {
-    DirectoryLoaded(Vec<FileEntry>),
-    ParentLoaded(Vec<FileEntry>),
-    Error(String),
-}
+enum IoCommand { LoadDirectory(PathBuf, bool), LoadParent(PathBuf, bool) }
+enum IoResult { DirectoryLoaded(Vec<FileEntry>), ParentLoaded(Vec<FileEntry>), Error(String) }
 
 fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<FileEntry>, std::io::Error> {
     let mut entries = Vec::new();
     let read_dir = fs::read_dir(path)?;
-
     for entry_result in read_dir {
         if let Ok(entry) = entry_result {
             let path = entry.path();
             if !show_hidden {
                 if let Some(name) = path.file_name() {
-                    if name.to_string_lossy().starts_with('.') {
-                        continue;
-                    }
+                    if name.to_string_lossy().starts_with('.') { continue; }
                 }
             }
-            if let Some(file_entry) = FileEntry::from_path(path) {
-                entries.push(file_entry);
-            }
+            if let Some(file_entry) = FileEntry::from_path(path) { entries.push(file_entry); }
         }
     }
-
     entries.sort_by(|a, b| {
-        if a.is_dir != b.is_dir {
-            return b.is_dir.cmp(&a.is_dir);
-        }
+        if a.is_dir != b.is_dir { return b.is_dir.cmp(&a.is_dir); }
         a.name.to_lowercase().cmp(&b.name.to_lowercase())
     });
-
     Ok(entries)
 }
 
-// Simple fuzzy subsequence match
 fn fuzzy_match(text: &str, query: &str) -> bool {
     if query.is_empty() { return true; }
-    
     let mut q_chars = query.chars();
-    let mut q_char = match q_chars.next() {
-        Some(c) => c,
-        None => return true,
-    };
-    
+    let mut q_char = match q_chars.next() { Some(c) => c, None => return true };
     for t_char in text.chars() {
         if t_char.to_ascii_lowercase() == q_char.to_ascii_lowercase() {
-            q_char = match q_chars.next() {
-                Some(c) => c,
-                None => return true,
-            };
+            q_char = match q_chars.next() { Some(c) => c, None => return true };
         }
     }
     false
@@ -142,17 +107,20 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
 struct RustyYazi {
     // Core State
     current_path: PathBuf,
-    all_entries: Vec<FileEntry>,      // Source of truth (raw)
-    visible_entries: Vec<FileEntry>,  // Filtered view
+    history: Vec<PathBuf>,      // New: History stack
+    history_index: usize,       // New: Current position in history
+    
+    all_entries: Vec<FileEntry>,
+    visible_entries: Vec<FileEntry>,
     parent_entries: Vec<FileEntry>,
     
     // Navigation State
     selected_index: Option<usize>,
-    multi_selection: HashSet<PathBuf>, // For Visual mode
+    multi_selection: HashSet<PathBuf>,
     
     // Mode State
     mode: AppMode,
-    command_buffer: String, // Shared for Command(:) and Filter(/)
+    command_buffer: String,
     focus_input: bool,
     
     // UI State
@@ -199,6 +167,8 @@ impl RustyYazi {
 
         let mut app = Self {
             current_path: start_path.clone(),
+            history: vec![start_path.clone()],
+            history_index: 0,
             all_entries: Vec::new(),
             visible_entries: Vec::new(),
             parent_entries: Vec::new(),
@@ -241,13 +211,8 @@ impl RustyYazi {
         } else {
             self.visible_entries = self.all_entries.clone();
         }
-        
-        // Reset selection if it went out of bounds
-        if self.visible_entries.is_empty() {
-            self.selected_index = None;
-        } else {
-            self.selected_index = Some(0);
-        }
+        if self.visible_entries.is_empty() { self.selected_index = None; } 
+        else { self.selected_index = Some(0); }
     }
 
     fn process_async_results(&mut self) {
@@ -256,11 +221,9 @@ impl RustyYazi {
                 IoResult::DirectoryLoaded(entries) => {
                     self.all_entries = entries;
                     self.is_loading = false;
-                    self.apply_filter(); // Re-apply filter on new data
+                    self.apply_filter();
                 }
-                IoResult::ParentLoaded(entries) => {
-                    self.parent_entries = entries;
-                }
+                IoResult::ParentLoaded(entries) => { self.parent_entries = entries; }
                 IoResult::Error(msg) => {
                     self.is_loading = false;
                     self.error_message = Some(msg);
@@ -271,14 +234,20 @@ impl RustyYazi {
         }
     }
 
+    // --- Navigation Logic ---
+
     fn navigate_to(&mut self, path: PathBuf) {
         if path.is_dir() {
-            self.current_path = path;
-            self.command_buffer.clear();
-            self.mode = AppMode::Normal; // Exit filter/visual on nav
-            self.multi_selection.clear();
-            self.selected_index = Some(0);
-            self.request_refresh();
+            self.current_path = path.clone();
+            
+            // History Logic: Remove forward history if branching
+            if self.history_index < self.history.len() - 1 {
+                self.history.truncate(self.history_index + 1);
+            }
+            self.history.push(path);
+            self.history_index = self.history.len() - 1;
+
+            self.finish_navigation();
         } else {
             if let Err(e) = open::that(&path) {
                 self.error_message = Some(format!("Could not open file: {}", e));
@@ -288,20 +257,38 @@ impl RustyYazi {
 
     fn navigate_up(&mut self) {
         if let Some(parent) = self.current_path.parent() {
-            self.current_path = parent.to_path_buf();
-            self.request_refresh();
-            self.selected_index = Some(0);
-            self.mode = AppMode::Normal;
-            self.multi_selection.clear();
+            self.navigate_to(parent.to_path_buf());
         }
+    }
+
+    fn navigate_back(&mut self) {
+        if self.history_index > 0 {
+            self.history_index -= 1;
+            self.current_path = self.history[self.history_index].clone();
+            self.finish_navigation();
+        }
+    }
+
+    fn navigate_forward(&mut self) {
+        if self.history_index < self.history.len() - 1 {
+            self.history_index += 1;
+            self.current_path = self.history[self.history_index].clone();
+            self.finish_navigation();
+        }
+    }
+
+    fn finish_navigation(&mut self) {
+        self.command_buffer.clear();
+        self.mode = AppMode::Normal;
+        self.multi_selection.clear();
+        self.selected_index = Some(0);
+        self.request_refresh();
     }
 
     fn execute_command(&mut self, ctx: &egui::Context) {
         let cmd = self.command_buffer.trim().to_string();
-        // Clear buffer and exit mode *before* execution logic
         self.command_buffer.clear();
         self.mode = AppMode::Normal; 
-
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         if parts.is_empty() { return; }
 
@@ -326,70 +313,67 @@ impl RustyYazi {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
-        // --- Mode Switching ---
-        
-        // Escape: Always return to Normal
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.mode = AppMode::Normal;
             self.command_buffer.clear();
             self.multi_selection.clear();
-            self.apply_filter(); // clear filter
+            self.apply_filter();
             return;
         }
 
-        // If in Command or Filtering, Handle Text Input
+        // Global History keys
+        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)) {
+            self.navigate_back();
+            return;
+        }
+        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight)) {
+            self.navigate_forward();
+            return;
+        }
+
+        // Text Input Modes
         if matches!(self.mode, AppMode::Command | AppMode::Filtering) {
             if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if self.mode == AppMode::Command {
-                    self.execute_command(ctx);
-                } else {
-                    // For filtering, Enter just keeps the filter active but gives focus back to list
-                    // Optional: You could make Enter "select" the top item.
-                    // For now, let's just switch mode to Normal but KEEP the buffer (so filter persists)
-                    // Actually, standard TUI behavior: Enter on filter usually selects the file.
-                    // Let's keep it simple: Escape cancels filter, user must nav manually.
-                }
+                if self.mode == AppMode::Command { self.execute_command(ctx); }
             }
-            // While filtering, update the list live
             if self.mode == AppMode::Filtering && ctx.input(|i| i.pointer.any_pressed()) == false {
-                // Hack: we let the TextEdit handle input, but we need to trigger updates
-                // The TextEdit updates `self.command_buffer` automatically.
-                // We call `apply_filter` in `update` loop.
+                // Implicitly handled by update
             }
             return;
         }
-
-        // --- Normal & Visual Mode Inputs ---
-
-        // Mode Triggers
-        if ctx.input(|i| i.key_pressed(egui::Key::Colon)) {
-            self.mode = AppMode::Command;
-            self.focus_input = true;
-            self.command_buffer.clear();
+        
+        if self.mode == AppMode::Help {
+            // Any key dismisses help? Or just Escape.
             return;
+        }
+
+        // Normal Mode Triggers
+        if ctx.input(|i| i.key_pressed(egui::Key::Colon)) {
+            self.mode = AppMode::Command; self.focus_input = true; self.command_buffer.clear(); return;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Slash)) {
-            self.mode = AppMode::Filtering;
-            self.focus_input = true;
-            self.command_buffer.clear();
+            self.mode = AppMode::Filtering; self.focus_input = true; self.command_buffer.clear(); return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Period)) {
+            self.show_hidden = !self.show_hidden;
+            self.request_refresh();
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Questionmark)) {
+            self.mode = AppMode::Help;
             return;
         }
         if self.mode == AppMode::Normal && ctx.input(|i| i.key_pressed(egui::Key::V)) {
             self.mode = AppMode::Visual;
-            // Start selection at current
             if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.visible_entries.get(idx) {
-                    self.multi_selection.insert(entry.path.clone());
-                }
+                if let Some(entry) = self.visible_entries.get(idx) { self.multi_selection.insert(entry.path.clone()); }
             }
             return;
         }
 
         // Navigation
         if self.visible_entries.is_empty() {
-             if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) {
-                self.navigate_up();
-            }
+             if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) { self.navigate_up(); }
             return;
         }
 
@@ -399,85 +383,47 @@ impl RustyYazi {
         let mut new_index = current;
 
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J)) {
-            new_index = (current + 1).min(max_idx);
-            changed = true;
+            new_index = (current + 1).min(max_idx); changed = true;
         }
-
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K)) {
-            new_index = current.saturating_sub(1);
-            changed = true;
+            new_index = current.saturating_sub(1); changed = true;
         }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) {
-            self.navigate_up();
-        }
-
+        if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) { self.navigate_up(); }
         if ctx.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::L)) {
             if let Some(idx) = self.selected_index {
                 if let Some(entry) = self.visible_entries.get(idx) {
-                    let path = entry.path.clone();
-                    self.navigate_to(path);
+                    let path = entry.path.clone(); self.navigate_to(path);
                 }
             }
         }
 
-        if ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.shift) {
-            new_index = max_idx;
-            changed = true;
-        }
-
+        if ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.shift) { new_index = max_idx; changed = true; }
         if ctx.input(|i| i.key_pressed(egui::Key::G) && !i.modifiers.shift) {
             let now = Instant::now();
             if let Some(last) = self.last_g_press {
-                if now.duration_since(last) < Duration::from_millis(500) {
-                    new_index = 0;
-                    self.last_g_press = None;
-                    changed = true;
-                } else {
-                    self.last_g_press = Some(now);
-                }
-            } else {
-                self.last_g_press = Some(now);
-            }
+                if now.duration_since(last) < Duration::from_millis(500) { new_index = 0; self.last_g_press = None; changed = true; } 
+                else { self.last_g_press = Some(now); }
+            } else { self.last_g_press = Some(now); }
         }
-
         if let Some(last) = self.last_g_press {
-            if Instant::now().duration_since(last) > Duration::from_millis(500) {
-                self.last_g_press = None;
-            }
+            if Instant::now().duration_since(last) > Duration::from_millis(500) { self.last_g_press = None; }
         }
 
         if changed {
             self.selected_index = Some(new_index);
             self.last_selection_change = Instant::now();
-
-            // Visual Mode Logic: Expand selection to new focus
             if self.mode == AppMode::Visual {
-                if let Some(entry) = self.visible_entries.get(new_index) {
-                    if self.multi_selection.contains(&entry.path) {
-                        // Deselect if backtracking? No, usually just adds. 
-                        // For simplicity: "v" mode toggles, movement adds.
-                        self.multi_selection.insert(entry.path.clone());
-                    } else {
-                        self.multi_selection.insert(entry.path.clone());
-                    }
-                }
+                if let Some(entry) = self.visible_entries.get(new_index) { self.multi_selection.insert(entry.path.clone()); }
             }
         }
     }
 
     fn render_preview(&self, ui: &mut egui::Ui) {
         let idx = match self.selected_index {
-            Some(i) => i,
-            None => {
-                ui.centered_and_justified(|ui| { ui.label("No file selected"); });
-                return;
-            }
+            Some(i) => i, None => { ui.centered_and_justified(|ui| { ui.label("No file selected"); }); return; }
         };
-
         let entry = match self.visible_entries.get(idx) {
-            Some(e) => e,
-            None => return,
+            Some(e) => e, None => return,
         };
 
         ui.heading(format!("{} {}", entry.get_icon(), entry.name));
@@ -487,15 +433,13 @@ impl RustyYazi {
         ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
         ui.separator();
 
-        if entry.is_dir {
-            ui.centered_and_justified(|ui| { ui.label("📁 Directory"); });
-            return;
+        if entry.is_dir { ui.centered_and_justified(|ui| { ui.label("📁 Directory"); }); return; }
+        if matches!(entry.extension.as_str(), "pdf") {
+            ui.centered_and_justified(|ui| { ui.label("📕 PDF Preview Not Supported"); }); return;
         }
 
-        let is_settled = self.last_selection_change.elapsed() > Duration::from_millis(200);
-        if !is_settled {
-            ui.centered_and_justified(|ui| { ui.spinner(); });
-            return; 
+        if self.last_selection_change.elapsed() <= Duration::from_millis(200) {
+            ui.centered_and_justified(|ui| { ui.spinner(); }); return; 
         }
 
         if matches!(entry.extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") {
@@ -514,10 +458,24 @@ impl RustyYazi {
                         match std::str::from_utf8(&buffer[..n]) {
                             Ok(text) => {
                                 egui::ScrollArea::vertical().id_salt("preview_text").show(ui, |ui| {
-                                    ui.monospace(text);
-                                    if n == 2048 {
-                                        ui.colored_label(egui::Color32::YELLOW, "\n--- Preview Truncated ---");
+                                    // Poor man's syntax highlighting
+                                    let is_code = matches!(entry.extension.as_str(), "rs" | "py" | "js" | "ts" | "toml" | "json");
+                                    if is_code {
+                                        for line in text.lines() {
+                                            let trimmed = line.trim();
+                                            if trimmed.starts_with("//") || trimmed.starts_with('#') {
+                                                 ui.label(egui::RichText::new(line).color(egui::Color32::DARK_GREEN));
+                                            } else if trimmed.contains("fn ") || trimmed.contains("struct ") || trimmed.contains("def ") || trimmed.contains("class ") {
+                                                 ui.label(egui::RichText::new(line).color(egui::Color32::LIGHT_BLUE));
+                                            } else {
+                                                 ui.monospace(line);
+                                            }
+                                        }
+                                    } else {
+                                        ui.monospace(text);
                                     }
+                                    
+                                    if n == 2048 { ui.colored_label(egui::Color32::YELLOW, "\n--- Preview Truncated ---"); }
                                 });
                             }
                             Err(_) => { ui.centered_and_justified(|ui| { ui.label("binary content"); }); }
@@ -537,13 +495,10 @@ impl eframe::App for RustyYazi {
         self.process_async_results();
         self.handle_input(ctx);
         
-        // Reactive Filter Update
         if self.mode == AppMode::Filtering {
             let old_len = self.visible_entries.len();
             self.apply_filter();
-            if self.visible_entries.len() != old_len {
-                self.last_selection_change = Instant::now(); // Trigger debounce
-            }
+            if self.visible_entries.len() != old_len { self.last_selection_change = Instant::now(); }
         }
 
         let next_navigation = std::cell::RefCell::new(None);
@@ -552,10 +507,12 @@ impl eframe::App for RustyYazi {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                if ui.button("⬆").clicked() { self.navigate_up(); }
+                // History Controls
+                if ui.button("⬅").on_hover_text("Back (Alt+Left)").clicked() { self.navigate_back(); }
+                if ui.button("➡").on_hover_text("Forward (Alt+Right)").clicked() { self.navigate_forward(); }
+                if ui.button("⬆").on_hover_text("Up (Backspace)").clicked() { self.navigate_up(); }
                 ui.add_space(10.0);
                 
-                // Breadcrumbs
                 let components: Vec<_> = self.current_path.components().collect();
                 let mut path_acc = PathBuf::new();
                 for component in components {
@@ -567,13 +524,14 @@ impl eframe::App for RustyYazi {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.checkbox(&mut self.show_hidden, "Hidden").changed() { self.request_refresh(); }
-                    // Mode indicator
+                    if ui.checkbox(&mut self.show_hidden, "Hidden (.)").changed() { self.request_refresh(); }
+                    if ui.button("?").clicked() { self.mode = AppMode::Help; }
                     match self.mode {
                         AppMode::Normal => { ui.label("NORMAL"); },
                         AppMode::Visual => { ui.colored_label(egui::Color32::LIGHT_BLUE, "VISUAL"); },
                         AppMode::Filtering => { ui.colored_label(egui::Color32::YELLOW, "FILTER"); },
                         AppMode::Command => { ui.colored_label(egui::Color32::RED, "COMMAND"); },
+                        AppMode::Help => { ui.colored_label(egui::Color32::GREEN, "HELP"); },
                     }
                 });
             });
@@ -585,7 +543,6 @@ impl eframe::App for RustyYazi {
                 ui.label(format!("{}/{} items", self.visible_entries.len(), self.all_entries.len()));
                 if self.is_loading { ui.spinner(); }
                 if let Some(err) = &self.error_message { ui.colored_label(egui::Color32::RED, format!(" | {}", err)); }
-                
                 if !self.multi_selection.is_empty() {
                     ui.separator();
                     ui.colored_label(egui::Color32::LIGHT_BLUE, format!("{} selected", self.multi_selection.len()));
@@ -601,10 +558,12 @@ impl eframe::App for RustyYazi {
                 for entry in &self.parent_entries {
                     let is_active = entry.path == self.current_path;
                     let text = format!("{} {}", entry.get_icon(), entry.name);
-                    let text_color = if is_active { egui::Color32::WHITE } else { egui::Color32::GRAY };
-                    if ui.add(egui::Label::new(egui::RichText::new(text).color(text_color)).sense(egui::Sense::click())).clicked() {
-                         *next_navigation.borrow_mut() = Some(entry.path.clone());
-                    }
+                    
+                    // VISUAL TWEAK: Use specific blue for active to readable on light/dark
+                    let text_color = if is_active { egui::Color32::from_rgb(100, 200, 255) } else { ui.visuals().weak_text_color() };
+                    
+                    let label = egui::Label::new(egui::RichText::new(text).color(text_color)).sense(egui::Sense::click());
+                    if ui.add(label).clicked() { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
                 }
             });
         });
@@ -617,22 +576,45 @@ impl eframe::App for RustyYazi {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Popup for Command or Filter input
+            // Help Modal
+            if self.mode == AppMode::Help {
+                 egui::Window::new("Help")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.heading("Key Bindings");
+                        ui.separator();
+                        egui::Grid::new("help_grid").striped(true).show(ui, |ui| {
+                            ui.label("j / Down"); ui.label("Next Item"); ui.end_row();
+                            ui.label("k / Up"); ui.label("Previous Item"); ui.end_row();
+                            ui.label("h / Backspace"); ui.label("Go to Parent"); ui.end_row();
+                            ui.label("l / Enter"); ui.label("Open / Enter Dir"); ui.end_row();
+                            ui.label("gg"); ui.label("Go to Top"); ui.end_row();
+                            ui.label("G"); ui.label("Go to Bottom"); ui.end_row();
+                            ui.label("Alt + Left"); ui.label("Back History"); ui.end_row();
+                            ui.label("Alt + Right"); ui.label("Forward History"); ui.end_row();
+                            ui.label("."); ui.label("Toggle Hidden"); ui.end_row();
+                            ui.label("/"); ui.label("Filter Mode"); ui.end_row();
+                            ui.label(":"); ui.label("Command Mode"); ui.end_row();
+                            ui.label("v"); ui.label("Visual Select Mode"); ui.end_row();
+                            ui.label("?"); ui.label("Toggle Help"); ui.end_row();
+                        });
+                        ui.add_space(10.0);
+                        if ui.button("Close").clicked() { self.mode = AppMode::Normal; }
+                    });
+            }
+
+            // Command/Filter Input
             if matches!(self.mode, AppMode::Command | AppMode::Filtering) {
-                let area = egui::Area::new("input_popup".into())
-                    .anchor(egui::Align2::CENTER_TOP, [0.0, 50.0])
-                    .order(egui::Order::Foreground);
-                
+                let area = egui::Area::new("input_popup".into()).anchor(egui::Align2::CENTER_TOP, [0.0, 50.0]).order(egui::Order::Foreground);
                 area.show(ctx, |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_min_width(400.0);
                         ui.horizontal(|ui| {
                             ui.label(if self.mode == AppMode::Command { ":" } else { "/" });
                             let response = ui.text_edit_singleline(&mut self.command_buffer);
-                            if self.focus_input {
-                                response.request_focus();
-                                self.focus_input = false;
-                            }
+                            if self.focus_input { response.request_focus(); self.focus_input = false; }
                         });
                     });
                 });
@@ -640,38 +622,24 @@ impl eframe::App for RustyYazi {
 
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 use egui_extras::{TableBuilder, Column};
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(true)
+                TableBuilder::new(ui).striped(true).resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::auto().at_least(30.0))
                     .column(Column::remainder())
-                    .header(20.0, |mut header| {
-                        header.col(|ui| { ui.label(""); });
-                        header.col(|ui| { ui.label("Name"); });
-                    })
+                    .header(20.0, |mut header| { header.col(|ui| { ui.label(""); }); header.col(|ui| { ui.label("Name"); }); })
                     .body(|body| {
                         body.rows(24.0, self.visible_entries.len(), |mut row| {
                             let row_index = row.index();
                             let entry = &self.visible_entries[row_index];
-                            
-                            // Selection Logic
                             let is_focused = self.selected_index == Some(row_index);
                             let is_multi_selected = self.multi_selection.contains(&entry.path);
                             
-                            // Custom color for Visual selection
-                            if is_multi_selected {
-                                row.set_selected(true); // Highlights row
-                            } else if is_focused {
-                                row.set_selected(true); // Standard highlight
-                            }
+                            if is_multi_selected { row.set_selected(true); } else if is_focused { row.set_selected(true); }
 
                             row.col(|ui| { ui.label(entry.get_icon()); });
                             row.col(|ui| {
                                 let mut text = egui::RichText::new(&entry.name);
-                                if is_multi_selected {
-                                    text = text.color(egui::Color32::LIGHT_BLUE);
-                                }
+                                if is_multi_selected { text = text.color(egui::Color32::LIGHT_BLUE); }
                                 if ui.selectable_label(is_focused, text).clicked() {
                                     *next_selection.borrow_mut() = Some(row_index);
                                     if entry.is_dir { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
@@ -689,17 +657,11 @@ impl eframe::App for RustyYazi {
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 700.0])
-            .with_title("Rusty Yazi"),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 700.0]).with_title("Rusty Yazi"),
         ..Default::default()
     };
     eframe::run_native(
-        "Rusty Yazi",
-        options,
-        Box::new(|cc| {
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(RustyYazi::new(cc.egui_ctx.clone())))
-        }),
+        "Rusty Yazi", options,
+        Box::new(|cc| { egui_extras::install_image_loaders(&cc.egui_ctx); Ok(Box::new(RustyYazi::new(cc.egui_ctx.clone()))) }),
     )
 }
