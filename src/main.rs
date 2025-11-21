@@ -61,8 +61,13 @@ enum AppMode {
     Visual,
     Filtering,
     Command,
-    Help, // New Mode
+    Help,
+    Rename,        // New
+    DeleteConfirm, // New
 }
+
+#[derive(Clone, Copy, PartialEq)]
+enum ClipboardOp { Copy, Cut } // New
 
 // --- Async Architecture ---
 
@@ -107,8 +112,8 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
 struct RustyYazi {
     // Core State
     current_path: PathBuf,
-    history: Vec<PathBuf>,      // New: History stack
-    history_index: usize,       // New: Current position in history
+    history: Vec<PathBuf>,
+    history_index: usize,
     
     all_entries: Vec<FileEntry>,
     visible_entries: Vec<FileEntry>,
@@ -123,8 +128,13 @@ struct RustyYazi {
     command_buffer: String,
     focus_input: bool,
     
+    // Clipboard State (New)
+    clipboard: HashSet<PathBuf>,
+    clipboard_op: Option<ClipboardOp>,
+    
     // UI State
     error_message: Option<String>,
+    info_message: Option<String>, // New
     show_hidden: bool,
     is_loading: bool,
     last_g_press: Option<Instant>,
@@ -177,7 +187,10 @@ impl RustyYazi {
             mode: AppMode::Normal,
             command_buffer: String::new(),
             focus_input: false,
+            clipboard: HashSet::new(),    // Init
+            clipboard_op: None,           // Init
             error_message: None,
+            info_message: None,           // Init
             show_hidden: false,
             is_loading: false,
             last_g_press: None,
@@ -193,6 +206,7 @@ impl RustyYazi {
     fn request_refresh(&mut self) {
         self.is_loading = true;
         self.error_message = None;
+        // Keep info message if it's fresh, or maybe clear it? Let's keep it for feedback.
         let _ = self.command_tx.send(IoCommand::LoadDirectory(self.current_path.clone(), self.show_hidden));
         if let Some(parent) = self.current_path.parent() {
             let _ = self.command_tx.send(IoCommand::LoadParent(parent.to_path_buf(), self.show_hidden));
@@ -240,7 +254,6 @@ impl RustyYazi {
         if path.is_dir() {
             self.current_path = path.clone();
             
-            // History Logic: Remove forward history if branching
             if self.history_index < self.history.len() - 1 {
                 self.history.truncate(self.history_index + 1);
             }
@@ -285,6 +298,103 @@ impl RustyYazi {
         self.request_refresh();
     }
 
+    // --- File Operations (Injected) ---
+
+    fn yank_selection(&mut self, op: ClipboardOp) {
+        self.clipboard.clear();
+        self.clipboard_op = Some(op);
+
+        if !self.multi_selection.is_empty() {
+            self.clipboard = self.multi_selection.clone();
+            self.mode = AppMode::Normal; 
+            self.multi_selection.clear();
+        } else if let Some(idx) = self.selected_index {
+            if let Some(entry) = self.visible_entries.get(idx) {
+                self.clipboard.insert(entry.path.clone());
+            }
+        }
+        
+        let op_text = if self.clipboard_op == Some(ClipboardOp::Copy) { "Yanked" } else { "Cut" };
+        self.info_message = Some(format!("{} {} files", op_text, self.clipboard.len()));
+    }
+
+    fn paste_clipboard(&mut self) {
+        if self.clipboard.is_empty() { return; }
+        let op = match self.clipboard_op { Some(o) => o, None => return };
+
+        let mut count = 0;
+        let mut errors = Vec::new();
+
+        for src in &self.clipboard {
+            if let Some(name) = src.file_name() {
+                let dest = self.current_path.join(name);
+                if src.is_dir() {
+                    if op == ClipboardOp::Cut {
+                        if let Err(e) = fs::rename(src, &dest) { errors.push(format!("Move dir failed: {}", e)); }
+                        else { count += 1; }
+                    } else {
+                        errors.push("Copying directories not supported in Rusty Yazi (lite)".into());
+                    }
+                } else {
+                    if op == ClipboardOp::Copy {
+                        if let Err(e) = fs::copy(src, &dest) { errors.push(format!("Copy file failed: {}", e)); }
+                        else { count += 1; }
+                    } else {
+                        if let Err(e) = fs::rename(src, &dest) { errors.push(format!("Move file failed: {}", e)); }
+                        else { count += 1; }
+                    }
+                }
+            }
+        }
+
+        if !errors.is_empty() { self.error_message = Some(errors.join(" | ")); } 
+        else { self.info_message = Some(format!("Processed {} files", count)); }
+
+        if op == ClipboardOp::Cut { self.clipboard.clear(); self.clipboard_op = None; }
+        self.request_refresh();
+    }
+
+    fn perform_delete(&mut self) {
+        let targets = if !self.multi_selection.is_empty() {
+            self.multi_selection.clone()
+        } else if let Some(idx) = self.selected_index {
+            if let Some(entry) = self.visible_entries.get(idx) {
+                HashSet::from([entry.path.clone()])
+            } else { HashSet::new() }
+        } else { HashSet::new() };
+
+        for path in targets {
+            if path.is_dir() { let _ = fs::remove_dir_all(&path); } 
+            else { let _ = fs::remove_file(&path); }
+        }
+        
+        self.mode = AppMode::Normal;
+        self.multi_selection.clear();
+        self.request_refresh();
+        self.info_message = Some("Items deleted".into());
+    }
+
+    fn perform_rename(&mut self) {
+        if let Some(idx) = self.selected_index {
+            if let Some(entry) = self.visible_entries.get(idx) {
+                let new_name = self.command_buffer.trim();
+                if !new_name.is_empty() {
+                    let new_path = entry.path.parent().unwrap().join(new_name);
+                    if let Err(e) = fs::rename(&entry.path, &new_path) {
+                        self.error_message = Some(format!("Rename failed: {}", e));
+                    } else {
+                        self.info_message = Some("Renamed successfully".into());
+                    }
+                }
+            }
+        }
+        self.mode = AppMode::Normal;
+        self.command_buffer.clear();
+        self.request_refresh();
+    }
+
+    // --- Input Handling ---
+
     fn execute_command(&mut self, ctx: &egui::Context) {
         let cmd = self.command_buffer.trim().to_string();
         self.command_buffer.clear();
@@ -313,6 +423,38 @@ impl RustyYazi {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
+        // 1. Modal Inputs (Command, Filter, Rename)
+        if matches!(self.mode, AppMode::Command | AppMode::Filtering | AppMode::Rename) {
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                match self.mode {
+                    AppMode::Rename => self.perform_rename(),
+                    AppMode::Command => self.execute_command(ctx),
+                    _ => {}
+                }
+            }
+            if self.mode == AppMode::Filtering && ctx.input(|i| i.pointer.any_pressed()) == false {
+                // Implicitly handled
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.mode = AppMode::Normal; self.command_buffer.clear(); self.apply_filter();
+            }
+            return;
+        }
+        
+        // 2. Confirmation Modals
+        if self.mode == AppMode::DeleteConfirm {
+            if ctx.input(|i| i.key_pressed(egui::Key::Y) || i.key_pressed(egui::Key::Enter)) { self.perform_delete(); }
+            if ctx.input(|i| i.key_pressed(egui::Key::N) || i.key_pressed(egui::Key::Escape)) { self.mode = AppMode::Normal; }
+            return;
+        }
+        
+        if self.mode == AppMode::Help {
+             if ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Q) || i.key_pressed(egui::Key::Questionmark)) {
+                 self.mode = AppMode::Normal;
+             }
+             return;
+        }
+
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.mode = AppMode::Normal;
             self.command_buffer.clear();
@@ -321,33 +463,11 @@ impl RustyYazi {
             return;
         }
 
-        // Global History keys
-        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)) {
-            self.navigate_back();
-            return;
-        }
-        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight)) {
-            self.navigate_forward();
-            return;
-        }
+        // 3. Global History keys
+        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)) { self.navigate_back(); return; }
+        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight)) { self.navigate_forward(); return; }
 
-        // Text Input Modes
-        if matches!(self.mode, AppMode::Command | AppMode::Filtering) {
-            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if self.mode == AppMode::Command { self.execute_command(ctx); }
-            }
-            if self.mode == AppMode::Filtering && ctx.input(|i| i.pointer.any_pressed()) == false {
-                // Implicitly handled by update
-            }
-            return;
-        }
-        
-        if self.mode == AppMode::Help {
-            // Any key dismisses help? Or just Escape.
-            return;
-        }
-
-        // Normal Mode Triggers
+        // 4. Normal Mode Triggers
         if ctx.input(|i| i.key_pressed(egui::Key::Colon)) {
             self.mode = AppMode::Command; self.focus_input = true; self.command_buffer.clear(); return;
         }
@@ -355,13 +475,10 @@ impl RustyYazi {
             self.mode = AppMode::Filtering; self.focus_input = true; self.command_buffer.clear(); return;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Period)) {
-            self.show_hidden = !self.show_hidden;
-            self.request_refresh();
-            return;
+            self.show_hidden = !self.show_hidden; self.request_refresh(); return;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Questionmark)) {
-            self.mode = AppMode::Help;
-            return;
+            self.mode = AppMode::Help; return;
         }
         if self.mode == AppMode::Normal && ctx.input(|i| i.key_pressed(egui::Key::V)) {
             self.mode = AppMode::Visual;
@@ -371,7 +488,22 @@ impl RustyYazi {
             return;
         }
 
-        // Navigation
+        // 5. File Operation Triggers (Phase 6)
+        if ctx.input(|i| i.key_pressed(egui::Key::Y)) { self.yank_selection(ClipboardOp::Copy); }
+        if ctx.input(|i| i.key_pressed(egui::Key::X)) { self.yank_selection(ClipboardOp::Cut); }
+        if ctx.input(|i| i.key_pressed(egui::Key::P)) { self.paste_clipboard(); }
+        if ctx.input(|i| i.key_pressed(egui::Key::D)) { self.mode = AppMode::DeleteConfirm; }
+        if ctx.input(|i| i.key_pressed(egui::Key::R)) { 
+            if let Some(idx) = self.selected_index {
+                if let Some(entry) = self.visible_entries.get(idx) {
+                    self.command_buffer = entry.name.clone();
+                    self.mode = AppMode::Rename;
+                    self.focus_input = true;
+                }
+            }
+        }
+
+        // 6. Navigation (j/k/arrows)
         if self.visible_entries.is_empty() {
              if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) { self.navigate_up(); }
             return;
@@ -513,6 +645,7 @@ impl eframe::App for RustyYazi {
                 if ui.button("⬆").on_hover_text("Up (Backspace)").clicked() { self.navigate_up(); }
                 ui.add_space(10.0);
                 
+                // Breadcrumbs
                 let components: Vec<_> = self.current_path.components().collect();
                 let mut path_acc = PathBuf::new();
                 for component in components {
@@ -526,12 +659,16 @@ impl eframe::App for RustyYazi {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.checkbox(&mut self.show_hidden, "Hidden (.)").changed() { self.request_refresh(); }
                     if ui.button("?").clicked() { self.mode = AppMode::Help; }
+                    
+                    // Mode Indicator
                     match self.mode {
                         AppMode::Normal => { ui.label("NORMAL"); },
                         AppMode::Visual => { ui.colored_label(egui::Color32::LIGHT_BLUE, "VISUAL"); },
                         AppMode::Filtering => { ui.colored_label(egui::Color32::YELLOW, "FILTER"); },
                         AppMode::Command => { ui.colored_label(egui::Color32::RED, "COMMAND"); },
                         AppMode::Help => { ui.colored_label(egui::Color32::GREEN, "HELP"); },
+                        AppMode::Rename => { ui.colored_label(egui::Color32::ORANGE, "RENAME"); },
+                        AppMode::DeleteConfirm => { ui.colored_label(egui::Color32::RED, "CONFIRM DELETE?"); },
                     }
                 });
             });
@@ -542,7 +679,10 @@ impl eframe::App for RustyYazi {
             ui.horizontal(|ui| {
                 ui.label(format!("{}/{} items", self.visible_entries.len(), self.all_entries.len()));
                 if self.is_loading { ui.spinner(); }
+                
+                if let Some(msg) = &self.info_message { ui.colored_label(egui::Color32::GREEN, msg); }
                 if let Some(err) = &self.error_message { ui.colored_label(egui::Color32::RED, format!(" | {}", err)); }
+                
                 if !self.multi_selection.is_empty() {
                     ui.separator();
                     ui.colored_label(egui::Color32::LIGHT_BLUE, format!("{} selected", self.multi_selection.len()));
@@ -554,16 +694,15 @@ impl eframe::App for RustyYazi {
             ui.add_space(4.0);
             ui.vertical_centered(|ui| { ui.heading("Parent"); });
             ui.separator();
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("parent_scroll").show(ui, |ui| {
                 for entry in &self.parent_entries {
                     let is_active = entry.path == self.current_path;
                     let text = format!("{} {}", entry.get_icon(), entry.name);
-                    
-                    // VISUAL TWEAK: Use specific blue for active to readable on light/dark
                     let text_color = if is_active { egui::Color32::from_rgb(100, 200, 255) } else { ui.visuals().weak_text_color() };
                     
-                    let label = egui::Label::new(egui::RichText::new(text).color(text_color)).sense(egui::Sense::click());
-                    if ui.add(label).clicked() { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
+                    if ui.add(egui::Label::new(egui::RichText::new(text).color(text_color)).sense(egui::Sense::click())).clicked() {
+                         *next_navigation.borrow_mut() = Some(entry.path.clone());
+                    }
                 }
             });
         });
@@ -590,14 +729,14 @@ impl eframe::App for RustyYazi {
                             ui.label("k / Up"); ui.label("Previous Item"); ui.end_row();
                             ui.label("h / Backspace"); ui.label("Go to Parent"); ui.end_row();
                             ui.label("l / Enter"); ui.label("Open / Enter Dir"); ui.end_row();
-                            ui.label("gg"); ui.label("Go to Top"); ui.end_row();
-                            ui.label("G"); ui.label("Go to Bottom"); ui.end_row();
-                            ui.label("Alt + Left"); ui.label("Back History"); ui.end_row();
-                            ui.label("Alt + Right"); ui.label("Forward History"); ui.end_row();
+                            ui.label("gg / G"); ui.label("Top / Bottom"); ui.end_row();
+                            ui.label("Alt + Arrows"); ui.label("History"); ui.end_row();
                             ui.label("."); ui.label("Toggle Hidden"); ui.end_row();
                             ui.label("/"); ui.label("Filter Mode"); ui.end_row();
                             ui.label(":"); ui.label("Command Mode"); ui.end_row();
                             ui.label("v"); ui.label("Visual Select Mode"); ui.end_row();
+                            ui.label("y / x / p"); ui.label("Copy / Cut / Paste"); ui.end_row();
+                            ui.label("d / r"); ui.label("Delete / Rename"); ui.end_row();
                             ui.label("?"); ui.label("Toggle Help"); ui.end_row();
                         });
                         ui.add_space(10.0);
@@ -605,14 +744,14 @@ impl eframe::App for RustyYazi {
                     });
             }
 
-            // Command/Filter Input
-            if matches!(self.mode, AppMode::Command | AppMode::Filtering) {
-                let area = egui::Area::new("input_popup".into()).anchor(egui::Align2::CENTER_TOP, [0.0, 50.0]).order(egui::Order::Foreground);
-                area.show(ctx, |ui| {
+            // Command/Filter/Rename Input Modal
+            if matches!(self.mode, AppMode::Command | AppMode::Filtering | AppMode::Rename) {
+                egui::Area::new("input_popup".into()).anchor(egui::Align2::CENTER_TOP, [0.0, 50.0]).order(egui::Order::Foreground).show(ctx, |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_min_width(400.0);
+                        let prefix = match self.mode { AppMode::Rename => "Rename:", AppMode::Filtering => "/", _ => ":" };
                         ui.horizontal(|ui| {
-                            ui.label(if self.mode == AppMode::Command { ":" } else { "/" });
+                            ui.label(prefix);
                             let response = ui.text_edit_singleline(&mut self.command_buffer);
                             if self.focus_input { response.request_focus(); self.focus_input = false; }
                         });
@@ -620,7 +759,7 @@ impl eframe::App for RustyYazi {
                 });
             }
 
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("current_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 use egui_extras::{TableBuilder, Column};
                 TableBuilder::new(ui).striped(true).resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -633,6 +772,7 @@ impl eframe::App for RustyYazi {
                             let entry = &self.visible_entries[row_index];
                             let is_focused = self.selected_index == Some(row_index);
                             let is_multi_selected = self.multi_selection.contains(&entry.path);
+                            let is_cut = self.clipboard_op == Some(ClipboardOp::Cut) && self.clipboard.contains(&entry.path);
                             
                             if is_multi_selected { row.set_selected(true); } else if is_focused { row.set_selected(true); }
 
@@ -640,6 +780,7 @@ impl eframe::App for RustyYazi {
                             row.col(|ui| {
                                 let mut text = egui::RichText::new(&entry.name);
                                 if is_multi_selected { text = text.color(egui::Color32::LIGHT_BLUE); }
+                                if is_cut { text = text.color(egui::Color32::from_white_alpha(100)); } // Dimmed
                                 if ui.selectable_label(is_focused, text).clicked() {
                                     *next_selection.borrow_mut() = Some(row_index);
                                     if entry.is_dir { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
@@ -657,11 +798,11 @@ impl eframe::App for RustyYazi {
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 700.0]).with_title("Rusty Yazi"),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 700.0]).with_title("Heike"),
         ..Default::default()
     };
     eframe::run_native(
-        "Rusty Yazi", options,
+        "Heike", options,
         Box::new(|cc| { egui_extras::install_image_loaders(&cc.egui_ctx); Ok(Box::new(RustyYazi::new(cc.egui_ctx.clone()))) }),
     )
 }

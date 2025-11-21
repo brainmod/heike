@@ -1,47 +1,75 @@
-Rusty Yazi Roadmap
+# **Heike (formerly Rusty Yazi)**
 
-Phases 1-5 (Completed) ✅
+**Origin:** Named after the *Heikegani* (平家蟹), a species of crab native to Japan with a shell that bears the pattern of a human face, often said to resemble the face of an angry samurai.  
+**Philosophy:** Heike is a GUI spiritual successor to the terminal file manager **Yazi**. It marries the speed and keyboard-centric efficiency of a TUI with the rich media capabilities and distinct visual layout of a modern GUI (using egui).
 
-Miller Columns Layout
+## **Project Status: Active Prototype**
 
-Vim Navigation & Async I/O
+**Current Version:** 0.6.0 (The "Manager" Update)
 
-Previews (Image/Text)
+## **Phase 1: Foundation & Layout (Completed) ✅**
 
-Filtering & Visual Selection
+* **Miller Columns:** 3-pane layout (Parent \-\> Current \-\> Preview).  
+* **Visuals:** Resizable SidePanels vs CentralPanel.  
+* **Context:** Parent directory is dimmed/grayed out; Current is bright/white.
 
-Icons & History
+## **Phase 2: Navigation & Input (Completed) ✅**
 
-Phase 6: File Manipulation (The "Manager" Update)
+* **Vim Bindings:** j/k (nav), h/l (parent/enter), gg/G (top/bottom).  
+* **History:** Browser-style Back/Forward (Alt+Left/Right).  
+* **Breadcrumbs:** Clickable path segments in the top bar.  
+* **Search:** Basic path entry validation.
 
-Without this, it's just a file viewer.
+## **Phase 3: Media & Previews (Completed) ✅**
 
-[ ] Clipboard State:
+* **Image Preview:** Async loading of png, jpg, webp.  
+* **Code Preview:** Syntax-highlighting (lite) for rs, py, js, etc.  
+* **Safety:** Binary file detection and PDF "not supported" stubs.  
+* **Performance:** Debounced loading (200ms delay) to prevent stuttering during fast scrolling.
 
-Implement internal state to track paths marked for Copy or Cut.
+## **Phase 4: Architecture (Completed) ✅**
 
-Visual indicators for Cut (dimmed) vs Copy.
+* **Async I/O:** Dedicated worker thread for filesystem operations.  
+* **Channels:** mpsc communication between UI and backend.  
+* **Loading States:** Spinners and non-blocking UI updates.
 
-[ ] Operations:
+## **Phase 5: Power User Features (Completed) ✅**
 
-y: Yank (Copy) selection to clipboard.
+* **Modes:** State machine for Normal, Visual, Command, Filtering.  
+* **Fuzzy Filter:** Press / to filter current view instantly.  
+* **Visual Mode:** Press v to select multiple files for batch operations.  
+* **Icons:** Nerd-font style emoji icons based on file extension.
 
-x: Cut selection to clipboard.
+## **Phase 6: File Management (Current) ✅**
 
-p: Paste clipboard to current directory.
+* **Clipboard:** Internal Copy/Cut state (HashSet\<PathBuf\>).  
+* **Operations:**  
+  * y (Yank/Copy)  
+  * x (Cut)  
+  * p (Paste)  
+  * d (Delete with confirmation)  
+  * r (Rename with modal)  
+* **Feedback:** "Info" and "Error" message toast system in the bottom bar.
 
-d: Delete selection (with Confirmation Modal).
+## **Phase 7: The "Polished" Experience (Next Steps)**
 
-r: Rename selected file (with Input Modal).
+*Focus: UX refinement and closing the gap with native file managers.*
 
-[ ] Recursive Logic:
+* \[ \] **App Icon Integration:**  
+  * Use the new icon.svg (convert to .ico/.png) for the window title bar.  
+* \[ \] **Drag & Drop:**  
+  * Allow dragging files from Heike to external apps (Explorer/Finder).  
+  * Allow dropping files into Heike to move/copy them.  
+* \[ \] **Context Menu:**  
+  * Right-click menu for mouse users (Open, Copy, Rename, Properties).  
+* \[ \] **Watcher:**  
+  * Integrate notify crate to auto-refresh when files are changed externally.  
+* \[ \] **Theme System:**  
+  * Allow toggling Light/Dark mode.  
+  * Configurable accent colors (currently hardcoded "Rust Orange" / "Light Blue").
 
-Ensure Copy/Delete works on directories (basic implementation).
+## **Phase 8: Advanced Features (Long Term)**
 
-Phase 7: Advanced Previews & Polish
-
-[ ] PDF Preview: Render first page as image.
-
-[ ] Syntax Highlighting: Better colorization.
-
-[ ] Theme Support: Configurable colors.
+* \[ \] **Tabs:** Multiple workspace tabs.  
+* \[ \] **Plugin System:** Lua or Wasm plugin support (ambitious).  
+* \[ \] **Terminal Integration:** Embedded terminal pane (using portable-pty).
