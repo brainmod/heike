@@ -68,23 +68,23 @@ Read the first N lines of the selected text file.
 
 Show a hex dump or a "Binary File" placeholder for non-text files.
 
-Phase 4: Architecture Overhaul (Async I/O)
+Phase 4: Architecture Overhaul (Async I/O) ✅
 
 Currently, fs::read_dir runs on the UI thread. Large folders will freeze the app.
 
-[ ] The Backend Thread:
+[x] The Backend Thread:
 
 Spawn a dedicated thread (or Tokio runtime) for file operations.
 
-Use crossbeam_channel to send Vec<FileEntry> from Backend to Frontend.
+Use std::sync::mpsc (or crossbeam) to send Vec<FileEntry> from Backend to Frontend.
 
-[ ] Loading States:
+[x] Loading States:
 
 Show a spinner while the directory is being read.
 
-[ ] Debounced Previews:
+[x] Debounced Previews:
 
-Don't load the preview instantly if the user is scrolling fast. Wait for the selection to settle for 50-100ms.
+Don't load the preview instantly if the user is scrolling fast. Wait for the selection to settle for 200ms.
 
 Phase 5: "Power User" Features
 

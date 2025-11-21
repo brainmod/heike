@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, Instant, Duration};
 use chrono::{DateTime, Local};
 use std::env;
-use std::io::Read; // Import Read for text previews
+use std::io::Read;
+use std::sync::mpsc::{Receiver, Sender};
+use std::thread;
 
 // --- Data Structures ---
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct FileEntry {
     path: PathBuf,
     name: String,
@@ -32,7 +34,53 @@ impl FileEntry {
     }
 }
 
+// --- Async Architecture ---
+
+enum IoCommand {
+    LoadDirectory(PathBuf, bool), // path, show_hidden
+    LoadParent(PathBuf, bool),    // path, show_hidden
+}
+
+enum IoResult {
+    DirectoryLoaded(Vec<FileEntry>),
+    ParentLoaded(Vec<FileEntry>),
+    Error(String),
+}
+
+fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<FileEntry>, std::io::Error> {
+    let mut entries = Vec::new();
+    let read_dir = fs::read_dir(path)?;
+
+    for entry_result in read_dir {
+        if let Ok(entry) = entry_result {
+            let path = entry.path();
+            if !show_hidden {
+                if let Some(name) = path.file_name() {
+                    if name.to_string_lossy().starts_with('.') {
+                        continue;
+                    }
+                }
+            }
+            if let Some(file_entry) = FileEntry::from_path(path) {
+                entries.push(file_entry);
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        if a.is_dir != b.is_dir {
+            return b.is_dir.cmp(&a.is_dir);
+        }
+        a.name.to_lowercase().cmp(&b.name.to_lowercase())
+    });
+
+    Ok(entries)
+}
+
+// --- Main App Struct ---
+
 struct RustyYazi {
+    // UI State
     current_path: PathBuf,
     entries: Vec<FileEntry>,
     parent_entries: Vec<FileEntry>,
@@ -40,19 +88,63 @@ struct RustyYazi {
     search_query: String,
     error_message: Option<String>,
     show_hidden: bool,
+    is_loading: bool,
 
-    // Phase 2: Vim & Command State
+    // Vim & Command State
     last_g_press: Option<Instant>,
     show_command_palette: bool,
     command_buffer: String,
     focus_command_input: bool,
+    
+    // Debounce State for Previews
+    last_selection_change: Instant,
+
+    // Async Communication
+    command_tx: Sender<IoCommand>,
+    result_rx: Receiver<IoResult>,
 }
 
-impl Default for RustyYazi {
-    fn default() -> Self {
+impl RustyYazi {
+    fn new(ctx: egui::Context) -> Self {
         let start_path = directories::UserDirs::new()
             .map(|ud| ud.home_dir().to_path_buf())
             .unwrap_or_else(|| env::current_dir().unwrap_or_default());
+
+        // Create Channels
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let (res_tx, res_rx) = std::sync::mpsc::channel();
+
+        // Spawn Background Thread
+        let ctx_clone = ctx.clone();
+        thread::spawn(move || {
+            while let Ok(cmd) = cmd_rx.recv() {
+                match cmd {
+                    IoCommand::LoadDirectory(path, hidden) => {
+                        match read_directory(&path, hidden) {
+                            Ok(entries) => {
+                                let _ = res_tx.send(IoResult::DirectoryLoaded(entries));
+                            }
+                            Err(e) => {
+                                let _ = res_tx.send(IoResult::Error(e.to_string()));
+                            }
+                        }
+                    }
+                    IoCommand::LoadParent(path, hidden) => {
+                        match read_directory(&path, hidden) {
+                            Ok(entries) => {
+                                let _ = res_tx.send(IoResult::ParentLoaded(entries));
+                            }
+                            Err(_) => {
+                                // Ignore parent errors (it might not exist)
+                                let _ = res_tx.send(IoResult::ParentLoaded(Vec::new()));
+                            }
+                        }
+                    }
+                }
+                // Wake up UI thread
+                ctx_clone.request_repaint();
+            }
+        });
 
         let mut app = Self {
             current_path: start_path.clone(),
@@ -62,75 +154,59 @@ impl Default for RustyYazi {
             search_query: String::new(),
             error_message: None,
             show_hidden: false,
+            is_loading: false,
             last_g_press: None,
             show_command_palette: false,
             command_buffer: String::new(),
             focus_command_input: false,
+            last_selection_change: Instant::now(),
+            command_tx: cmd_tx,
+            result_rx: res_rx,
         };
         
-        app.refresh_entries();
+        app.request_refresh();
         app
     }
-}
 
-impl RustyYazi {
-    fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<FileEntry>, std::io::Error> {
-        let mut entries = Vec::new();
-        let read_dir = fs::read_dir(path)?;
-
-        for entry_result in read_dir {
-            if let Ok(entry) = entry_result {
-                let path = entry.path();
-                if !show_hidden {
-                    if let Some(name) = path.file_name() {
-                        if name.to_string_lossy().starts_with('.') {
-                            continue;
-                        }
-                    }
-                }
-                if let Some(file_entry) = FileEntry::from_path(path) {
-                    entries.push(file_entry);
-                }
-            }
-        }
-
-        entries.sort_by(|a, b| {
-            if a.is_dir != b.is_dir {
-                return b.is_dir.cmp(&a.is_dir);
-            }
-            a.name.to_lowercase().cmp(&b.name.to_lowercase())
-        });
-
-        Ok(entries)
-    }
-
-    fn refresh_entries(&mut self) {
+    fn request_refresh(&mut self) {
+        self.is_loading = true;
         self.error_message = None;
-
-        match Self::read_directory(&self.current_path, self.show_hidden) {
-            Ok(entries) => {
-                self.entries = entries;
-                if !self.entries.is_empty() {
-                    if self.selected_index.is_none() {
-                         self.selected_index = Some(0);
-                    }
-                } else {
-                    self.selected_index = None;
-                }
-            }
-            Err(e) => {
-                self.entries.clear();
-                self.error_message = Some(format!("Error reading current: {}", e));
-            }
-        }
-
+        
+        // Send commands to worker
+        let _ = self.command_tx.send(IoCommand::LoadDirectory(self.current_path.clone(), self.show_hidden));
+        
         if let Some(parent) = self.current_path.parent() {
-            match Self::read_directory(parent, self.show_hidden) {
-                Ok(entries) => self.parent_entries = entries,
-                Err(_) => self.parent_entries.clear(),
-            }
+            let _ = self.command_tx.send(IoCommand::LoadParent(parent.to_path_buf(), self.show_hidden));
         } else {
             self.parent_entries.clear();
+        }
+    }
+
+    fn process_async_results(&mut self) {
+        // Non-blocking receive
+        while let Ok(result) = self.result_rx.try_recv() {
+            match result {
+                IoResult::DirectoryLoaded(entries) => {
+                    self.entries = entries;
+                    self.is_loading = false;
+                    // Safety check index
+                    if !self.entries.is_empty() {
+                        if self.selected_index.is_none() {
+                            self.selected_index = Some(0);
+                        }
+                    } else {
+                        self.selected_index = None;
+                    }
+                }
+                IoResult::ParentLoaded(entries) => {
+                    self.parent_entries = entries;
+                }
+                IoResult::Error(msg) => {
+                    self.is_loading = false;
+                    self.error_message = Some(msg);
+                    self.entries.clear();
+                }
+            }
         }
     }
 
@@ -139,7 +215,7 @@ impl RustyYazi {
             self.current_path = path;
             self.search_query.clear();
             self.selected_index = Some(0);
-            self.refresh_entries();
+            self.request_refresh();
         } else {
             if let Err(e) = open::that(&path) {
                 self.error_message = Some(format!("Could not open file: {}", e));
@@ -150,10 +226,17 @@ impl RustyYazi {
     fn navigate_up(&mut self) {
         if let Some(parent) = self.current_path.parent() {
             let old_current = self.current_path.clone();
-            self.navigate_to(parent.to_path_buf());
-            if let Some(idx) = self.entries.iter().position(|e| e.path == old_current) {
-                self.selected_index = Some(idx);
-            }
+            
+            // We set the path immediately for UI responsiveness, 
+            // but data will arrive asynchronously
+            self.current_path = parent.to_path_buf();
+            self.request_refresh();
+
+            // We can't restore selection index yet because we don't have the new entries.
+            // In a full impl, we would store "pending_selection" state.
+            // For now, we reset to 0, and the user can find the folder.
+            // (Implementing pending_selection is a good Phase 5 task)
+            self.selected_index = Some(0);
         }
     }
 
@@ -175,10 +258,7 @@ impl RustyYazi {
                     if let Err(e) = fs::create_dir(&new_dir) {
                         self.error_message = Some(format!("mkdir failed: {}", e));
                     } else {
-                        self.refresh_entries();
-                        if let Some(idx) = self.entries.iter().position(|e| e.path == new_dir) {
-                            self.selected_index = Some(idx);
-                        }
+                        self.request_refresh();
                     }
                 } else {
                     self.error_message = Some("Usage: mkdir <name>".into());
@@ -190,10 +270,7 @@ impl RustyYazi {
                     if let Err(e) = fs::File::create(&new_file) {
                         self.error_message = Some(format!("touch failed: {}", e));
                     } else {
-                        self.refresh_entries();
-                        if let Some(idx) = self.entries.iter().position(|e| e.path == new_file) {
-                            self.selected_index = Some(idx);
-                        }
+                        self.request_refresh();
                     }
                 } else {
                     self.error_message = Some("Usage: touch <name>".into());
@@ -282,9 +359,12 @@ impl RustyYazi {
                 self.last_g_press = None;
             }
         }
+
+        if changed {
+            self.last_selection_change = Instant::now();
+        }
     }
 
-    // --- Phase 3: Preview Renderer ---
     fn render_preview(&self, ui: &mut egui::Ui) {
         let idx = match self.selected_index {
             Some(i) => i,
@@ -312,13 +392,20 @@ impl RustyYazi {
             return;
         }
 
+        // DEBOUNCE CHECK
+        // Only load preview if user has paused scrolling for 200ms
+        let is_settled = self.last_selection_change.elapsed() > Duration::from_millis(200);
+
+        if !is_settled {
+            ui.centered_and_justified(|ui| { ui.spinner(); });
+            return; 
+        }
+
         // 1. Image Preview
         if let Some(ext) = entry.path.extension() {
             let ext_str = ext.to_string_lossy().to_lowercase();
             if matches!(ext_str.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") {
-                // egui_extras requires "file://" prefix for local paths
                 let uri = format!("file://{}", entry.path.display());
-                
                 egui::ScrollArea::vertical().id_salt("preview_img").show(ui, |ui| {
                     ui.add(egui::Image::new(uri).max_width(ui.available_width()));
                 });
@@ -326,14 +413,12 @@ impl RustyYazi {
             }
         }
 
-        // 2. Text Preview (First 2KB)
-        // Note: Synchronous read is acceptable for Phase 3, but Phase 4 will improve this.
+        // 2. Text Preview (2KB limit)
         match fs::File::open(&entry.path) {
             Ok(mut file) => {
                 let mut buffer = [0u8; 2048]; 
                 match file.read(&mut buffer) {
                     Ok(n) if n > 0 => {
-                        // Attempt to parse as UTF-8
                         match std::str::from_utf8(&buffer[..n]) {
                             Ok(text) => {
                                 egui::ScrollArea::vertical().id_salt("preview_text").show(ui, |ui| {
@@ -359,6 +444,9 @@ impl RustyYazi {
 
 impl eframe::App for RustyYazi {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 1. Check async channel
+        self.process_async_results();
+
         self.handle_input(ctx);
 
         let next_navigation = std::cell::RefCell::new(None);
@@ -389,7 +477,7 @@ impl eframe::App for RustyYazi {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.checkbox(&mut self.show_hidden, "Hidden").changed() {
-                        self.refresh_entries();
+                        self.request_refresh();
                     }
                 });
             });
@@ -400,6 +488,13 @@ impl eframe::App for RustyYazi {
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(format!("{} items", self.entries.len()));
+                
+                // Async Loading Indicator
+                if self.is_loading {
+                    ui.spinner();
+                    ui.label("Loading...");
+                }
+
                 if let Some(err) = &self.error_message {
                     ui.colored_label(egui::Color32::RED, format!(" | {}", err));
                 }
@@ -430,7 +525,6 @@ impl eframe::App for RustyYazi {
             ui.add_space(4.0);
             ui.vertical_centered(|ui| { ui.heading("Preview"); });
             ui.separator();
-            // Call new helper
             self.render_preview(ui);
         });
 
@@ -493,7 +587,7 @@ impl eframe::App for RustyYazi {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 700.0]) // Slightly larger for previews
+            .with_inner_size([1200.0, 700.0])
             .with_title("Rusty Yazi"),
         ..Default::default()
     };
@@ -501,9 +595,9 @@ fn main() -> eframe::Result<()> {
         "Rusty Yazi",
         options,
         Box::new(|cc| {
-            // IMPORTANT: Install image loaders for Phase 3
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(RustyYazi::default()))
+            // Pass the context to new() so it can pass it to the thread
+            Ok(Box::new(RustyYazi::new(cc.egui_ctx.clone())))
         }),
     )
 }
