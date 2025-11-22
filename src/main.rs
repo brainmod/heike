@@ -48,17 +48,27 @@ impl FileEntry {
     }
 
     fn get_icon(&self) -> &str {
-        // Using emoji icons for universal compatibility
-        // For better icon rendering, consider using Nerd Fonts with custom glyph mappings
-        if self.is_dir { return "📁"; }
+        // Using Nerd Font icons for consistent rendering
+        // Icons use Unicode escape sequences for the Nerd Font glyphs
+        if self.is_dir { return "\u{f07b}"; } // folder icon
         match self.extension.as_str() {
-            "rs" => "🦀", "toml" => "⚙️", "md" => "📝", "txt" => "📄",
-            "png" | "jpg" | "jpeg" | "gif" | "webp" => "🖼️",
-            "mp4" | "mkv" | "mov" => "🎬", "mp3" | "wav" | "flac" => "🎵",
-            "zip" | "tar" | "gz" | "7z" | "rar" => "📦", "py" => "🐍",
-            "js" | "ts" | "jsx" | "tsx" => "📜", "html" | "css" => "🌐",
-            "json" | "yaml" | "yml" | "xml" => "📋", "pdf" => "📕",
-            "exe" | "msi" | "bat" | "sh" => "🚀", _ => "📄",
+            "rs" => "\u{e7a8}", "toml" => "\u{e615}", "md" => "\u{e73e}", "txt" => "\u{f15c}",
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => "\u{f1c5}",
+            "mp4" | "mkv" | "mov" | "avi" | "webm" => "\u{f03d}",
+            "mp3" | "wav" | "flac" | "ogg" | "m4a" => "\u{f001}",
+            "zip" | "tar" | "gz" | "7z" | "rar" | "xz" | "bz2" => "\u{f410}",
+            "py" => "\u{e73c}", "pyc" => "\u{e73c}",
+            "js" | "mjs" => "\u{e74e}", "ts" | "tsx" => "\u{e628}",
+            "jsx" => "\u{e7ba}", "html" | "htm" => "\u{e736}", "css" | "scss" | "sass" => "\u{e749}",
+            "json" => "\u{e60b}", "yaml" | "yml" => "\u{e615}", "xml" => "\u{e619}",
+            "pdf" => "\u{f1c1}", "doc" | "docx" => "\u{f1c2}", "xls" | "xlsx" => "\u{f1c3}",
+            "exe" | "msi" => "\u{f17a}", "bat" | "cmd" => "\u{e795}", "sh" | "bash" | "zsh" => "\u{f489}",
+            "c" | "h" => "\u{e61e}", "cpp" | "cc" | "cxx" | "hpp" => "\u{e61d}",
+            "java" => "\u{e738}", "class" | "jar" => "\u{e738}",
+            "go" => "\u{e626}", "rb" => "\u{e739}", "php" => "\u{e73d}",
+            "sql" | "db" | "sqlite" => "\u{f1c0}", "env" => "\u{f462}",
+            "lock" => "\u{f023}", "log" => "\u{f18d}", "git" | "gitignore" => "\u{e725}",
+            _ => "\u{f15b}",
         }
     }
 }
@@ -122,15 +132,16 @@ struct Heike {
     current_path: PathBuf,
     history: Vec<PathBuf>,
     history_index: usize,
-    
+
     all_entries: Vec<FileEntry>,
     visible_entries: Vec<FileEntry>,
     parent_entries: Vec<FileEntry>,
-    
+
     // Navigation State
     selected_index: Option<usize>,
     multi_selection: HashSet<PathBuf>,
     directory_selections: HashMap<PathBuf, usize>, // Track last selected index per directory
+    pending_selection_path: Option<PathBuf>, // Track item to select after navigation
     
     // Mode State
     mode: AppMode,
@@ -201,6 +212,7 @@ impl Heike {
             selected_index: Some(0),
             multi_selection: HashSet::new(),
             directory_selections: HashMap::new(),
+            pending_selection_path: None,
             mode: AppMode::Normal,
             command_buffer: String::new(),
             focus_input: false,
@@ -311,6 +323,14 @@ impl Heike {
                     self.all_entries = entries;
                     self.is_loading = false;
                     self.apply_filter();
+
+                    // If there's a pending selection path, find and select it
+                    if let Some(pending_path) = self.pending_selection_path.take() {
+                        if let Some(idx) = self.visible_entries.iter().position(|e| e.path == pending_path) {
+                            self.selected_index = Some(idx);
+                        }
+                    }
+
                     // Validate selection after loading
                     if let Some(idx) = self.selected_index {
                         if idx >= self.visible_entries.len() && !self.visible_entries.is_empty() {
@@ -684,7 +704,7 @@ impl Heike {
         }
     }
 
-    fn render_preview(&self, ui: &mut egui::Ui, next_navigation: &std::cell::RefCell<Option<PathBuf>>) {
+    fn render_preview(&self, ui: &mut egui::Ui, next_navigation: &std::cell::RefCell<Option<PathBuf>>, pending_selection: &std::cell::RefCell<Option<PathBuf>>) {
         let idx = match self.selected_index {
             Some(i) => i, None => { ui.centered_and_justified(|ui| { ui.label("No file selected"); }); return; }
         };
@@ -722,7 +742,10 @@ impl Heike {
                                     });
                                     row.col(|ui| {
                                         if ui.selectable_label(false, &preview_entry.name).clicked() {
-                                            *next_navigation.borrow_mut() = Some(preview_entry.path.clone());
+                                            // Navigate to the directory being previewed (the currently selected item)
+                                            // and set the clicked item to be selected after navigation
+                                            *next_navigation.borrow_mut() = Some(entry.path.clone());
+                                            *pending_selection.borrow_mut() = Some(preview_entry.path.clone());
                                         }
                                     });
                                 });
@@ -821,6 +844,7 @@ impl eframe::App for Heike {
 
         let next_navigation = std::cell::RefCell::new(None);
         let next_selection = std::cell::RefCell::new(None);
+        let pending_selection = std::cell::RefCell::new(None);
         let context_action = std::cell::RefCell::new(None::<Box<dyn FnOnce(&mut Self)>>);
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
@@ -913,16 +937,8 @@ impl eframe::App for Heike {
                             row.col(|ui| {
                                 let text_color = if is_active { egui::Color32::from_rgb(100, 200, 255) } else { ui.visuals().text_color() };
                                 if ui.selectable_label(is_active, egui::RichText::new(&entry.name).color(text_color)).clicked() {
-                                    // If clicking the active directory in parent pane, navigate UP to parent
-                                    // Otherwise, navigate to the clicked sibling directory
-                                    if is_active {
-                                        // Navigate to the parent of current (go up one level)
-                                        if let Some(parent_path) = self.current_path.parent() {
-                                            *next_navigation.borrow_mut() = Some(parent_path.to_path_buf());
-                                        }
-                                    } else {
-                                        *next_navigation.borrow_mut() = Some(entry.path.clone());
-                                    }
+                                    // Navigate to the clicked directory in the parent pane
+                                    *next_navigation.borrow_mut() = Some(entry.path.clone());
                                 }
                             });
                         });
@@ -934,7 +950,7 @@ impl eframe::App for Heike {
             ui.add_space(4.0);
             ui.vertical_centered(|ui| { ui.heading("Preview"); });
             ui.separator();
-            self.render_preview(ui, &next_navigation);
+            self.render_preview(ui, &next_navigation, &pending_selection);
         });
 
         // Visual feedback for drag and drop
@@ -1131,6 +1147,7 @@ impl eframe::App for Heike {
         });
 
         if let Some(idx) = next_selection.into_inner() { self.selected_index = Some(idx); }
+        if let Some(pending) = pending_selection.into_inner() { self.pending_selection_path = Some(pending); }
         if let Some(path) = next_navigation.into_inner() { self.navigate_to(path); }
         if let Some(action) = context_action.into_inner() { action(self); }
     }
@@ -1159,6 +1176,33 @@ fn main() -> eframe::Result<()> {
     };
     eframe::run_native(
         "Heike", options,
-        Box::new(|cc| { egui_extras::install_image_loaders(&cc.egui_ctx); Ok(Box::new(Heike::new(cc.egui_ctx.clone()))) }),
+        Box::new(|cc| {
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+
+            // Configure fonts to use bundled Nerd Font for icon rendering
+            let mut fonts = egui::FontDefinitions::default();
+
+            // Use bundled JetBrainsMono Nerd Font
+            let nerd_font_data = include_bytes!("../JetBrainsMonoNerdFont-Regular.ttf");
+            fonts.font_data.insert(
+                "nerd_font".to_owned(),
+                egui::FontData::from_static(nerd_font_data).into()
+            );
+
+            // Add to proportional and monospace families (prioritize Nerd Font)
+            fonts.families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "nerd_font".to_owned());
+
+            fonts.families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(0, "nerd_font".to_owned());
+
+            cc.egui_ctx.set_fonts(fonts);
+
+            Ok(Box::new(Heike::new(cc.egui_ctx.clone())))
+        }),
     )
 }

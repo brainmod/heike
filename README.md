@@ -8,8 +8,9 @@
 **Current Version:** 0.6.0 (The "Manager" Update)
 
 ### **Recent Updates** (2025-11-22)
+* ✅ **Nerd Font Integration:** Icons now use Nerd Font glyphs for crisp, professional rendering
 * ✅ **Icon Display Improvements:** Enhanced icon rendering with consistent sizing (14pt) across all panes
-* ✅ **Navigation Fix:** Corrected pane navigation behavior - clicking the active directory in parent pane now navigates up
+* ✅ **Navigation Fix:** Fixed pane navigation to work as proper Miller Columns - clicking left/right panes shifts content appropriately
 * ✅ **UX Enhancement:** Improved Miller column navigation to match expected file manager behavior
 
 ## **Core Features**
@@ -74,7 +75,8 @@
 * **Preview Status:** PDF placeholder ("not supported"), binary file indicators
 
 ### **Visual & Icons**
-* **File Type Icons:** Emoji-based icons for different file types
+* **File Type Icons:** Nerd Font glyphs for professional icon rendering (50+ file types supported)
+* **Bundled Font:** JetBrainsMono Nerd Font included - no external dependencies
 * **Extensible Icon System:** Easy to customize icon mappings
 * **Visual Feedback:** Cut files dimmed, multi-selected files highlighted
 * **Drag & Drop Overlay:** Visual indicator when dragging files over the window
@@ -83,7 +85,7 @@
 
 ### **Icon System Improvements**
 * [x] Consistent icon sizing across all panes (14pt)
-* [ ] Nerd Font support for professional icon rendering
+* [x] Nerd Font support for professional icon rendering
 * [ ] Custom icon themes
 * [ ] Icon size configuration option
 
@@ -131,4 +133,8 @@ cargo build --release
 cargo run
 ```
 
-**Requirements:** Rust 1.70+, modern graphics drivers supporting egui/wgpu
+**Requirements:**
+* Rust 1.70+
+* Modern graphics drivers supporting egui/wgpu
+
+**Note:** JetBrainsMono Nerd Font is bundled with the application, so icons work out of the box without any additional setup!
