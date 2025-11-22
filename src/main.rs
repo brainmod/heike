@@ -766,6 +766,7 @@ impl eframe::App for Heike {
                     rect,
                     5.0,
                     egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
+                    egui::epaint::StrokeKind::Outside,
                 );
                 ui.label(
                     egui::RichText::new("📁 Drop files here to copy them to this directory")
