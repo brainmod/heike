@@ -393,6 +393,39 @@ impl Heike {
         self.request_refresh();
     }
 
+    // --- Drag and Drop Handling ---
+
+    fn handle_dropped_files(&mut self, dropped_files: &[egui::DroppedFile]) {
+        let mut count = 0;
+        let mut errors = Vec::new();
+
+        for file in dropped_files {
+            if let Some(path) = &file.path {
+                let dest = self.current_path.join(path.file_name().unwrap_or_default());
+
+                // Copy the dropped file to current directory
+                if path.is_dir() {
+                    errors.push("Copying directories not supported".into());
+                } else {
+                    match fs::copy(path, &dest) {
+                        Ok(_) => count += 1,
+                        Err(e) => errors.push(format!("Copy failed: {}", e)),
+                    }
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            self.error_message = Some(errors.join(" | "));
+        } else if count > 0 {
+            self.info_message = Some(format!("Copied {} file(s)", count));
+        }
+
+        if count > 0 {
+            self.request_refresh();
+        }
+    }
+
     // --- Input Handling ---
 
     fn execute_command(&mut self, ctx: &egui::Context) {
@@ -626,7 +659,14 @@ impl eframe::App for Heike {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_async_results();
         self.handle_input(ctx);
-        
+
+        // Handle files dropped from external sources
+        ctx.input(|i| {
+            if !i.raw.dropped_files.is_empty() {
+                self.handle_dropped_files(&i.raw.dropped_files);
+            }
+        });
+
         if self.mode == AppMode::Filtering {
             let old_len = self.visible_entries.len();
             self.apply_filter();
@@ -714,7 +754,25 @@ impl eframe::App for Heike {
             self.render_preview(ui);
         });
 
+        // Visual feedback for drag and drop
+        let is_being_dragged_over = ctx.input(|i| !i.raw.hovered_files.is_empty());
+
         egui::CentralPanel::default().show(ctx, |ui| {
+            // Show drop zone overlay when files are being dragged over
+            if is_being_dragged_over {
+                let painter = ui.painter();
+                let rect = ui.available_rect_before_wrap();
+                painter.rect_stroke(
+                    rect,
+                    5.0,
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
+                );
+                ui.label(
+                    egui::RichText::new("📁 Drop files here to copy them to this directory")
+                        .size(16.0)
+                        .color(egui::Color32::from_rgb(100, 200, 255))
+                );
+            }
             // Help Modal
             if self.mode == AppMode::Help {
                  egui::Window::new("Help")
@@ -773,17 +831,33 @@ impl eframe::App for Heike {
                             let is_focused = self.selected_index == Some(row_index);
                             let is_multi_selected = self.multi_selection.contains(&entry.path);
                             let is_cut = self.clipboard_op == Some(ClipboardOp::Cut) && self.clipboard.contains(&entry.path);
-                            
+
                             if is_multi_selected { row.set_selected(true); } else if is_focused { row.set_selected(true); }
 
+                            // Icon column
                             row.col(|ui| { ui.label(entry.get_icon()); });
+
+                            // Name column with drag source support
                             row.col(|ui| {
                                 let mut text = egui::RichText::new(&entry.name);
                                 if is_multi_selected { text = text.color(egui::Color32::LIGHT_BLUE); }
                                 if is_cut { text = text.color(egui::Color32::from_white_alpha(100)); } // Dimmed
-                                if ui.selectable_label(is_focused, text).clicked() {
+
+                                // Enable dragging files to external apps
+                                let response = ui.dnd_drag_source(egui::Id::new(("file_drag", row_index)), egui::Vec2::new(200.0, 24.0), |ui| {
+                                    ui.selectable_label(is_focused, text)
+                                });
+
+                                if response.response.clicked() {
                                     *next_selection.borrow_mut() = Some(row_index);
                                     if entry.is_dir { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
+                                }
+
+                                // Set the file path for drag and drop
+                                if response.response.drag_started() {
+                                    ui.ctx().output_mut(|o| {
+                                        o.copied_text = entry.path.to_string_lossy().to_string();
+                                    });
                                 }
                             });
                         });
@@ -813,7 +887,8 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 700.0])
             .with_title("Heike")
-            .with_icon(icon_data),
+            .with_icon(icon_data)
+            .with_drag_and_drop(true),
         ..Default::default()
     };
     eframe::run_native(

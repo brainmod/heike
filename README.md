@@ -57,9 +57,9 @@
 
 * \[x\] **App Icon Integration:**
   * Use the new icon.svg (convert to .ico/.png) for the window title bar.
-* \[ \] **Drag & Drop:**
+* \[x\] **Drag & Drop:**
   * Allow dragging files from Heike to external apps (Explorer/Finder).
-  * Allow dropping files into Heike to move/copy them.
+  * Allow dropping files into Heike to copy them.
 * \[ \] **Context Menu:**
   * Right-click menu for mouse users (Open, Copy, Rename, Properties).
 * \[ \] **Watcher:**
