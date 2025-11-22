@@ -734,10 +734,13 @@ impl Heike {
                 egui::ScrollArea::vertical().id_salt("preview_code").show(ui, |ui| {
                     let mut highlighter = HighlightLines::new(syntax, theme);
 
+                    // Set tight spacing for code display
+                    ui.spacing_mut().item_spacing.y = 0.0;
+
                     for line in LinesWithEndings::from(&content) {
                         let ranges = highlighter.highlight_line(line, &self.syntax_set).unwrap_or_default();
 
-                        ui.horizontal_wrapped(|ui| {
+                        ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0;
                             for (style, text) in ranges {
                                 let color = egui::Color32::from_rgb(
