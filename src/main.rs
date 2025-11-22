@@ -246,8 +246,12 @@ impl Heike {
         } else {
             self.visible_entries = self.all_entries.clone();
         }
-        if self.visible_entries.is_empty() { self.selected_index = None; }
-        else { self.selected_index = Some(0); }
+        if self.visible_entries.is_empty() {
+            self.selected_index = None;
+        } else if self.selected_index.is_none() {
+            // Only set to 0 if there's no selection yet
+            self.selected_index = Some(0);
+        }
     }
 
     fn setup_watcher(&mut self, ctx: &egui::Context) {
@@ -680,7 +684,7 @@ impl Heike {
         }
     }
 
-    fn render_preview(&self, ui: &mut egui::Ui) {
+    fn render_preview(&self, ui: &mut egui::Ui, next_navigation: &std::cell::RefCell<Option<PathBuf>>) {
         let idx = match self.selected_index {
             Some(i) => i, None => { ui.centered_and_justified(|ui| { ui.label("No file selected"); }); return; }
         };
@@ -695,7 +699,42 @@ impl Heike {
         ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
         ui.separator();
 
-        if entry.is_dir { ui.centered_and_justified(|ui| { ui.label("📁 Directory"); }); return; }
+        if entry.is_dir {
+            // Show directory contents in preview pane
+            if self.last_selection_change.elapsed() <= Duration::from_millis(200) {
+                ui.centered_and_justified(|ui| { ui.spinner(); });
+                return;
+            }
+
+            match read_directory(&entry.path, self.show_hidden) {
+                Ok(entries) => {
+                    egui::ScrollArea::vertical().id_salt("preview_dir").show(ui, |ui| {
+                        use egui_extras::{TableBuilder, Column};
+                        TableBuilder::new(ui).striped(true).resizable(false)
+                            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                            .column(Column::auto().at_least(30.0))
+                            .column(Column::remainder())
+                            .body(|body| {
+                                body.rows(24.0, entries.len(), |mut row| {
+                                    let preview_entry = &entries[row.index()];
+                                    row.col(|ui| { ui.label(preview_entry.get_icon()); });
+                                    row.col(|ui| {
+                                        if ui.selectable_label(false, &preview_entry.name).clicked() {
+                                            *next_navigation.borrow_mut() = Some(preview_entry.path.clone());
+                                        }
+                                    });
+                                });
+                            });
+                    });
+                }
+                Err(e) => {
+                    ui.centered_and_justified(|ui| {
+                        ui.colored_label(egui::Color32::RED, format!("Cannot read directory: {}", e));
+                    });
+                }
+            }
+            return;
+        }
         if matches!(entry.extension.as_str(), "pdf") {
             ui.centered_and_justified(|ui| { ui.label("📕 PDF Preview Not Supported"); }); return;
         }
@@ -882,7 +921,7 @@ impl eframe::App for Heike {
             ui.add_space(4.0);
             ui.vertical_centered(|ui| { ui.heading("Preview"); });
             ui.separator();
-            self.render_preview(ui);
+            self.render_preview(ui, &next_navigation);
         });
 
         // Visual feedback for drag and drop
