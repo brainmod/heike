@@ -797,8 +797,23 @@ impl eframe::App for Heike {
 }
 
 fn main() -> eframe::Result<()> {
+    // Load the app icon
+    let icon_bytes = include_bytes!("../heike_icon.png");
+    let icon_image = image::load_from_memory(icon_bytes)
+        .expect("Failed to load icon")
+        .to_rgba8();
+    let (icon_width, icon_height) = icon_image.dimensions();
+    let icon_data = egui::IconData {
+        rgba: icon_image.into_raw(),
+        width: icon_width,
+        height: icon_height,
+    };
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 700.0]).with_title("Heike"),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1200.0, 700.0])
+            .with_title("Heike")
+            .with_icon(icon_data),
         ..Default::default()
     };
     eframe::run_native(
