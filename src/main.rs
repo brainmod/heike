@@ -49,26 +49,26 @@ impl FileEntry {
 
     fn get_icon(&self) -> &str {
         // Using Nerd Font icons for consistent rendering
-        // Requires a Nerd Font to be installed (e.g., JetBrainsMono Nerd Font, FiraCode Nerd Font)
-        if self.is_dir { return ""; }
+        // Icons use Unicode escape sequences for the Nerd Font glyphs
+        if self.is_dir { return "\u{f07b}"; } // folder icon
         match self.extension.as_str() {
-            "rs" => "", "toml" => "", "md" => "", "txt" => "",
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => "",
-            "mp4" | "mkv" | "mov" | "avi" | "webm" => "",
-            "mp3" | "wav" | "flac" | "ogg" | "m4a" => "",
-            "zip" | "tar" | "gz" | "7z" | "rar" | "xz" | "bz2" => "",
-            "py" => "", "pyc" => "",
-            "js" | "mjs" => "", "ts" | "tsx" => "",
-            "jsx" => "", "html" | "htm" => "", "css" | "scss" | "sass" => "",
-            "json" => "", "yaml" | "yml" => "", "xml" => "",
-            "pdf" => "", "doc" | "docx" => "", "xls" | "xlsx" => "",
-            "exe" | "msi" => "", "bat" | "cmd" => "", "sh" | "bash" | "zsh" => "",
-            "c" | "h" => "", "cpp" | "cc" | "cxx" | "hpp" => "",
-            "java" => "", "class" | "jar" => "",
-            "go" => "", "rb" => "", "php" => "",
-            "sql" | "db" | "sqlite" => "", "env" => "",
-            "lock" => "", "log" => "", "git" | "gitignore" => "",
-            _ => "",
+            "rs" => "\u{e7a8}", "toml" => "\u{e615}", "md" => "\u{e73e}", "txt" => "\u{f15c}",
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => "\u{f1c5}",
+            "mp4" | "mkv" | "mov" | "avi" | "webm" => "\u{f03d}",
+            "mp3" | "wav" | "flac" | "ogg" | "m4a" => "\u{f001}",
+            "zip" | "tar" | "gz" | "7z" | "rar" | "xz" | "bz2" => "\u{f410}",
+            "py" => "\u{e73c}", "pyc" => "\u{e73c}",
+            "js" | "mjs" => "\u{e74e}", "ts" | "tsx" => "\u{e628}",
+            "jsx" => "\u{e7ba}", "html" | "htm" => "\u{e736}", "css" | "scss" | "sass" => "\u{e749}",
+            "json" => "\u{e60b}", "yaml" | "yml" => "\u{e615}", "xml" => "\u{e619}",
+            "pdf" => "\u{f1c1}", "doc" | "docx" => "\u{f1c2}", "xls" | "xlsx" => "\u{f1c3}",
+            "exe" | "msi" => "\u{f17a}", "bat" | "cmd" => "\u{e795}", "sh" | "bash" | "zsh" => "\u{f489}",
+            "c" | "h" => "\u{e61e}", "cpp" | "cc" | "cxx" | "hpp" => "\u{e61d}",
+            "java" => "\u{e738}", "class" | "jar" => "\u{e738}",
+            "go" => "\u{e626}", "rb" => "\u{e739}", "php" => "\u{e73d}",
+            "sql" | "db" | "sqlite" => "\u{f1c0}", "env" => "\u{f462}",
+            "lock" => "\u{f023}", "log" => "\u{f18d}", "git" | "gitignore" => "\u{e725}",
+            _ => "\u{f15b}",
         }
     }
 }
