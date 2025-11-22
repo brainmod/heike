@@ -717,7 +717,9 @@ impl Heike {
                             .body(|body| {
                                 body.rows(24.0, entries.len(), |mut row| {
                                     let preview_entry = &entries[row.index()];
-                                    row.col(|ui| { ui.label(preview_entry.get_icon()); });
+                                    row.col(|ui| {
+                                        ui.label(egui::RichText::new(preview_entry.get_icon()).size(14.0));
+                                    });
                                     row.col(|ui| {
                                         if ui.selectable_label(false, &preview_entry.name).clicked() {
                                             *next_navigation.borrow_mut() = Some(preview_entry.path.clone());
@@ -905,11 +907,22 @@ impl eframe::App for Heike {
 
                             if is_active { row.set_selected(true); }
 
-                            row.col(|ui| { ui.label(entry.get_icon()); });
+                            row.col(|ui| {
+                                ui.label(egui::RichText::new(entry.get_icon()).size(14.0));
+                            });
                             row.col(|ui| {
                                 let text_color = if is_active { egui::Color32::from_rgb(100, 200, 255) } else { ui.visuals().text_color() };
                                 if ui.selectable_label(is_active, egui::RichText::new(&entry.name).color(text_color)).clicked() {
-                                    *next_navigation.borrow_mut() = Some(entry.path.clone());
+                                    // If clicking the active directory in parent pane, navigate UP to parent
+                                    // Otherwise, navigate to the clicked sibling directory
+                                    if is_active {
+                                        // Navigate to the parent of current (go up one level)
+                                        if let Some(parent_path) = self.current_path.parent() {
+                                            *next_navigation.borrow_mut() = Some(parent_path.to_path_buf());
+                                        }
+                                    } else {
+                                        *next_navigation.borrow_mut() = Some(entry.path.clone());
+                                    }
                                 }
                             });
                         });
@@ -1012,7 +1025,9 @@ impl eframe::App for Heike {
                             if is_multi_selected || is_focused { row.set_selected(true); }
 
                             // Icon column
-                            row.col(|ui| { ui.label(entry.get_icon()); });
+                            row.col(|ui| {
+                                ui.label(egui::RichText::new(entry.get_icon()).size(14.0));
+                            });
 
                             // Name column with context menu
                             row.col(|ui| {
