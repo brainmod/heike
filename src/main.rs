@@ -1368,7 +1368,14 @@ impl eframe::App for Heike {
                 });
             }
 
-            let scroll_output = egui::ScrollArea::vertical().id_salt("current_scroll").auto_shrink([false, false]).show(ui, |ui| {
+            // Detect manual scrolling in the central panel
+            if ui.ui_contains_pointer() {
+                if ctx.input(|i| i.smooth_scroll_delta != egui::Vec2::ZERO || i.raw_scroll_delta != egui::Vec2::ZERO) {
+                    self.disable_autoscroll = true;
+                }
+            }
+
+            egui::ScrollArea::vertical().id_salt("current_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 use egui_extras::{TableBuilder, Column};
                 let mut table = TableBuilder::new(ui).striped(true).resizable(false)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
@@ -1504,18 +1511,6 @@ impl eframe::App for Heike {
                         });
                     });
             });
-
-            // Detect manual scrolling (via scroll bar or mouse wheel over scroll area)
-            if scroll_output.inner_response.hovered() {
-                if ctx.input(|i| i.smooth_scroll_delta != egui::Vec2::ZERO || i.raw_scroll_delta != egui::Vec2::ZERO) {
-                    self.disable_autoscroll = true;
-                }
-            }
-
-            // Detect scroll bar dragging
-            if scroll_output.state.vel != egui::Vec2::ZERO {
-                self.disable_autoscroll = true;
-            }
         });
 
         if let Some(idx) = next_selection.into_inner() { self.selected_index = Some(idx); }
