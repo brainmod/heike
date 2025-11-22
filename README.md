@@ -60,8 +60,8 @@
 * \[x\] **Drag & Drop:**
   * Allow dropping files into Heike from external apps to copy them.
   * Note: Dragging OUT to external apps requires OS-level support not available in egui.
-* \[ \] **Context Menu:**
-  * Right-click menu for mouse users (Open, Copy, Rename, Properties).
+* \[x\] **Context Menu:**
+  * Right-click menu for mouse users (Open, Copy, Cut, Paste, Rename, Delete, Properties).
 * \[ \] **Watcher:**
   * Integrate notify crate to auto-refresh when files are changed externally.
 * \[ \] **Theme System:**

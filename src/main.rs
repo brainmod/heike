@@ -675,6 +675,7 @@ impl eframe::App for Heike {
 
         let next_navigation = std::cell::RefCell::new(None);
         let next_selection = std::cell::RefCell::new(None);
+        let context_action = std::cell::RefCell::new(None::<Box<dyn FnOnce(&mut Self)>>);
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.add_space(4.0);
@@ -838,16 +839,101 @@ impl eframe::App for Heike {
                             // Icon column
                             row.col(|ui| { ui.label(entry.get_icon()); });
 
-                            // Name column
+                            // Name column with context menu
                             row.col(|ui| {
                                 let mut text = egui::RichText::new(&entry.name);
                                 if is_multi_selected { text = text.color(egui::Color32::LIGHT_BLUE); }
                                 if is_cut { text = text.color(egui::Color32::from_white_alpha(100)); } // Dimmed
 
-                                if ui.selectable_label(is_focused, text).clicked() {
+                                let response = ui.selectable_label(is_focused, text);
+
+                                if response.clicked() {
                                     *next_selection.borrow_mut() = Some(row_index);
                                     if entry.is_dir { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
                                 }
+
+                                // Context menu on right-click
+                                let entry_clone = entry.clone();
+                                response.context_menu(|ui| {
+                                    if ui.button("📂 Open").clicked() {
+                                        if entry_clone.is_dir {
+                                            *next_navigation.borrow_mut() = Some(entry_clone.path.clone());
+                                        } else {
+                                            let _ = open::that(&entry_clone.path);
+                                        }
+                                        ui.close();
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button("📋 Copy (y)").clicked() {
+                                        let path = entry_clone.path.clone();
+                                        *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
+                                            app.clipboard.clear();
+                                            app.clipboard.insert(path);
+                                            app.clipboard_op = Some(ClipboardOp::Copy);
+                                            app.info_message = Some("Copied 1 file".into());
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    if ui.button("✂️ Cut (x)").clicked() {
+                                        let path = entry_clone.path.clone();
+                                        *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
+                                            app.clipboard.clear();
+                                            app.clipboard.insert(path);
+                                            app.clipboard_op = Some(ClipboardOp::Cut);
+                                            app.info_message = Some("Cut 1 file".into());
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    if ui.button("📥 Paste (p)").clicked() {
+                                        *context_action.borrow_mut() = Some(Box::new(|app: &mut Self| {
+                                            app.paste_clipboard();
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button("✏️ Rename (r)").clicked() {
+                                        *next_selection.borrow_mut() = Some(row_index);
+                                        let name = entry_clone.name.clone();
+                                        *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
+                                            app.command_buffer = name;
+                                            app.mode = AppMode::Rename;
+                                            app.focus_input = true;
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    if ui.button("🗑️ Delete (d)").clicked() {
+                                        *next_selection.borrow_mut() = Some(row_index);
+                                        *context_action.borrow_mut() = Some(Box::new(|app: &mut Self| {
+                                            app.mode = AppMode::DeleteConfirm;
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button("ℹ️ Properties").clicked() {
+                                        let size = entry_clone.size;
+                                        let modified = entry_clone.modified;
+                                        let is_dir = entry_clone.is_dir;
+                                        *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
+                                            app.info_message = Some(format!(
+                                                "{} | {} | Modified: {}",
+                                                if is_dir { "Directory" } else { "File" },
+                                                bytesize::ByteSize(size),
+                                                chrono::DateTime::<chrono::Local>::from(modified)
+                                                    .format("%Y-%m-%d %H:%M")
+                                            ));
+                                        }));
+                                        ui.close();
+                                    }
+                                });
                             });
                         });
                     });
@@ -856,6 +942,7 @@ impl eframe::App for Heike {
 
         if let Some(idx) = next_selection.into_inner() { self.selected_index = Some(idx); }
         if let Some(path) = next_navigation.into_inner() { self.navigate_to(path); }
+        if let Some(action) = context_action.into_inner() { action(self); }
     }
 }
 
