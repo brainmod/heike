@@ -21,5 +21,4 @@ zip = "2.2"      # For ZIP archive preview
 tar = "0.4"      # For TAR archive preview
 flate2 = "1.0"   # For gzip decompression
 id3 = "1.14"     # For audio metadata
-pdf-extract = "0.7" # For PDF text extraction
 lopdf = "0.34"   # For PDF metadata reading

@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, Instant, Duration};
 use chrono::{DateTime, Local};
 use std::env;
-use std::io::Read;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use std::collections::{HashSet, HashMap};
@@ -836,16 +835,19 @@ impl Heike {
     }
 
     fn render_archive_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        const MAX_PREVIEW_ITEMS: usize = 100; // Limit items to prevent performance issues
+
         let result = if entry.extension == "zip" {
             fs::File::open(&entry.path).ok().and_then(|file| {
                 ZipArchive::new(file).ok().map(|mut archive| {
+                    let total = archive.len();
                     let mut items = Vec::new();
-                    for i in 0..archive.len() {
+                    for i in 0..total.min(MAX_PREVIEW_ITEMS) {
                         if let Ok(file) = archive.by_index(i) {
                             items.push((file.name().to_string(), file.size(), file.is_dir()));
                         }
                     }
-                    items
+                    (items, total)
                 })
             })
         } else if entry.extension == "tar" || entry.extension == "gz" || entry.extension == "tgz" {
@@ -857,12 +859,14 @@ impl Heike {
                 };
 
                 Archive::new(reader).entries().ok().map(|entries| {
-                    entries.filter_map(|e| e.ok()).map(|e| {
+                    let items: Vec<_> = entries.filter_map(|e| e.ok()).take(MAX_PREVIEW_ITEMS).map(|e| {
                         let size = e.header().size().unwrap_or(0);
                         let path = e.path().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
                         let is_dir = e.header().entry_type().is_dir();
                         (path, size, is_dir)
-                    }).collect()
+                    }).collect();
+                    let total = items.len();
+                    (items, total)
                 })
             })
         } else {
@@ -870,9 +874,20 @@ impl Heike {
         };
 
         match result {
-            Some(items) => {
-                ui.label(format!("Archive contains {} items:", items.len()));
+            Some((items, total)) => {
+                if items.is_empty() {
+                    ui.centered_and_justified(|ui| {
+                        ui.label("Empty archive");
+                    });
+                    return;
+                }
+
+                ui.label(format!("Archive contains {} items{}:",
+                    total,
+                    if total > MAX_PREVIEW_ITEMS { format!(" (showing first {})", MAX_PREVIEW_ITEMS) } else { String::new() }
+                ));
                 ui.separator();
+
                 egui::ScrollArea::vertical().id_salt("preview_archive").show(ui, |ui| {
                     use egui_extras::{TableBuilder, Column};
                     TableBuilder::new(ui)
@@ -902,7 +917,9 @@ impl Heike {
                 });
             }
             None => {
-                ui.colored_label(egui::Color32::RED, "Failed to read archive");
+                ui.centered_and_justified(|ui| {
+                    ui.colored_label(egui::Color32::RED, "Failed to read archive");
+                });
             }
         }
     }
@@ -947,131 +964,62 @@ impl Heike {
         }
     }
 
-    fn render_hex_view(&self, ui: &mut egui::Ui, entry: &FileEntry) {
-        match fs::File::open(&entry.path) {
-            Ok(mut file) => {
-                let mut buffer = [0u8; 512]; // Read first 512 bytes
-                match file.read(&mut buffer) {
-                    Ok(n) if n > 0 => {
-                        egui::ScrollArea::vertical().id_salt("preview_hex").show(ui, |ui| {
-                            ui.monospace("Offset    00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  ASCII");
-                            ui.separator();
-
-                            for (i, chunk) in buffer[..n].chunks(16).enumerate() {
-                                let offset = i * 16;
-                                let mut hex_part = String::new();
-                                let mut ascii_part = String::new();
-
-                                for (j, &byte) in chunk.iter().enumerate() {
-                                    hex_part.push_str(&format!("{:02X} ", byte));
-                                    if j == 7 {
-                                        hex_part.push(' ');
-                                    }
-
-                                    if byte >= 32 && byte < 127 {
-                                        ascii_part.push(byte as char);
-                                    } else {
-                                        ascii_part.push('.');
-                                    }
-                                }
-
-                                // Pad hex_part to align ASCII
-                                while hex_part.len() < 50 {
-                                    hex_part.push(' ');
-                                }
-
-                                ui.monospace(format!("{:08X}  {} {}", offset, hex_part, ascii_part));
-                            }
-
-                            if n == 512 {
-                                ui.add_space(5.0);
-                                ui.colored_label(egui::Color32::YELLOW, "--- Preview limited to first 512 bytes ---");
-                            }
-                        });
-                    }
-                    Ok(_) => {
-                        ui.label("Empty file");
-                    }
-                    Err(e) => {
-                        ui.colored_label(egui::Color32::RED, format!("Read error: {}", e));
-                    }
-                }
-            }
-            Err(e) => {
-                ui.colored_label(egui::Color32::RED, format!("Open error: {}", e));
-            }
-        }
-    }
-
     fn render_pdf_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
-        match PdfDocument::load(&entry.path) {
-            Ok(doc) => {
-                // Extract basic metadata
-                ui.heading("PDF Document");
-                ui.separator();
+        ui.vertical_centered(|ui| {
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new("📕 PDF Document").size(18.0));
+            ui.add_space(10.0);
 
-                // Get document info from trailer
-                if let Ok(info_ref) = doc.trailer.get(b"Info") {
-                    if let Ok(info_id) = info_ref.as_reference() {
-                        if let Ok(info_obj) = doc.get_object(info_id) {
-                            if let Ok(info_dict) = info_obj.as_dict() {
-                                // Try to extract title
-                                if let Ok(title_obj) = info_dict.get(b"Title") {
-                                    if let Ok(title_bytes) = title_obj.as_str() {
-                                        if let Ok(title_str) = String::from_utf8(title_bytes.to_vec()) {
-                                            ui.label(format!("Title: {}", title_str));
+            match PdfDocument::load(&entry.path) {
+                Ok(doc) => {
+                    ui.label(format!("Pages: {}", doc.get_pages().len()));
+                    ui.add_space(5.0);
+
+                    // Try to extract basic metadata
+                    let mut has_metadata = false;
+                    if let Ok(info_ref) = doc.trailer.get(b"Info") {
+                        if let Ok(info_id) = info_ref.as_reference() {
+                            if let Ok(info_obj) = doc.get_object(info_id) {
+                                if let Ok(info_dict) = info_obj.as_dict() {
+                                    // Try to extract title
+                                    if let Ok(title_obj) = info_dict.get(b"Title") {
+                                        if let Ok(title_bytes) = title_obj.as_str() {
+                                            if let Ok(title_str) = String::from_utf8(title_bytes.to_vec()) {
+                                                if !title_str.is_empty() {
+                                                    ui.label(format!("Title: {}", title_str));
+                                                    has_metadata = true;
+                                                }
+                                            }
                                         }
                                     }
-                                }
-                                // Try to extract author
-                                if let Ok(author_obj) = info_dict.get(b"Author") {
-                                    if let Ok(author_bytes) = author_obj.as_str() {
-                                        if let Ok(author_str) = String::from_utf8(author_bytes.to_vec()) {
-                                            ui.label(format!("Author: {}", author_str));
+                                    // Try to extract author
+                                    if let Ok(author_obj) = info_dict.get(b"Author") {
+                                        if let Ok(author_bytes) = author_obj.as_str() {
+                                            if let Ok(author_str) = String::from_utf8(author_bytes.to_vec()) {
+                                                if !author_str.is_empty() {
+                                                    ui.label(format!("Author: {}", author_str));
+                                                    has_metadata = true;
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+
+                    if !has_metadata {
+                        ui.label(egui::RichText::new("No metadata available").italics().weak());
+                    }
+
+                    ui.add_space(10.0);
+                    ui.label(egui::RichText::new("Text content extraction disabled for performance").italics().weak());
                 }
-
-                ui.label(format!("Pages: {}", doc.get_pages().len()));
-                ui.add_space(10.0);
-
-                // Try to extract text from the document
-                match pdf_extract::extract_text(&entry.path) {
-                    Ok(text) => {
-                        if text.trim().is_empty() {
-                            ui.label("(No extractable text content)");
-                        } else {
-                            ui.separator();
-                            ui.label("Content preview:");
-                            ui.add_space(5.0);
-
-                            egui::ScrollArea::vertical().id_salt("preview_pdf").show(ui, |ui| {
-                                // Limit preview to first 2000 characters
-                                let preview_text = if text.len() > 2000 {
-                                    format!("{}\n\n--- Preview truncated, showing first 2000 characters ---", &text[..2000])
-                                } else {
-                                    text
-                                };
-
-                                for line in preview_text.lines() {
-                                    ui.label(line);
-                                }
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        ui.colored_label(egui::Color32::YELLOW, format!("Could not extract text: {}", e));
-                    }
+                Err(e) => {
+                    ui.colored_label(egui::Color32::RED, format!("Failed to load PDF: {}", e));
                 }
             }
-            Err(e) => {
-                ui.colored_label(egui::Color32::RED, format!("Failed to load PDF: {}", e));
-            }
-        }
+        });
     }
 
     fn render_preview(&self, ui: &mut egui::Ui, next_navigation: &std::cell::RefCell<Option<PathBuf>>, pending_selection: &std::cell::RefCell<Option<PathBuf>>) {
@@ -1184,13 +1132,22 @@ impl Heike {
                     return;
                 }
                 Err(_) => {
-                    // Fall through to hex view
+                    // Fall through to binary file message
                 }
             }
         }
 
-        // Binary/hex view for everything else
-        self.render_hex_view(ui, entry);
+        // Binary file - show info instead of auto-loading hex
+        ui.centered_and_justified(|ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.label(egui::RichText::new("📦 Binary File").size(18.0));
+                ui.add_space(10.0);
+                ui.label("Preview not available for this file type");
+                ui.add_space(5.0);
+                ui.label(format!("Extension: .{}", entry.extension));
+            });
+        });
     }
 }
 
