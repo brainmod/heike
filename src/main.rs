@@ -131,7 +131,7 @@ struct Heike {
     selected_index: Option<usize>,
     multi_selection: HashSet<PathBuf>,
     directory_selections: HashMap<PathBuf, usize>, // Track last selected index per directory
-
+    
     // Mode State
     mode: AppMode,
     command_buffer: String,
