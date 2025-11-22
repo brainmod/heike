@@ -48,17 +48,27 @@ impl FileEntry {
     }
 
     fn get_icon(&self) -> &str {
-        // Using emoji icons for universal compatibility
-        // For better icon rendering, consider using Nerd Fonts with custom glyph mappings
-        if self.is_dir { return "📁"; }
+        // Using Nerd Font icons for consistent rendering
+        // Requires a Nerd Font to be installed (e.g., JetBrainsMono Nerd Font, FiraCode Nerd Font)
+        if self.is_dir { return ""; }
         match self.extension.as_str() {
-            "rs" => "🦀", "toml" => "⚙️", "md" => "📝", "txt" => "📄",
-            "png" | "jpg" | "jpeg" | "gif" | "webp" => "🖼️",
-            "mp4" | "mkv" | "mov" => "🎬", "mp3" | "wav" | "flac" => "🎵",
-            "zip" | "tar" | "gz" | "7z" | "rar" => "📦", "py" => "🐍",
-            "js" | "ts" | "jsx" | "tsx" => "📜", "html" | "css" => "🌐",
-            "json" | "yaml" | "yml" | "xml" => "📋", "pdf" => "📕",
-            "exe" | "msi" | "bat" | "sh" => "🚀", _ => "📄",
+            "rs" => "", "toml" => "", "md" => "", "txt" => "",
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => "",
+            "mp4" | "mkv" | "mov" | "avi" | "webm" => "",
+            "mp3" | "wav" | "flac" | "ogg" | "m4a" => "",
+            "zip" | "tar" | "gz" | "7z" | "rar" | "xz" | "bz2" => "",
+            "py" => "", "pyc" => "",
+            "js" | "mjs" => "", "ts" | "tsx" => "",
+            "jsx" => "", "html" | "htm" => "", "css" | "scss" | "sass" => "",
+            "json" => "", "yaml" | "yml" => "", "xml" => "",
+            "pdf" => "", "doc" | "docx" => "", "xls" | "xlsx" => "",
+            "exe" | "msi" => "", "bat" | "cmd" => "", "sh" | "bash" | "zsh" => "",
+            "c" | "h" => "", "cpp" | "cc" | "cxx" | "hpp" => "",
+            "java" => "", "class" | "jar" => "",
+            "go" => "", "rb" => "", "php" => "",
+            "sql" | "db" | "sqlite" => "", "env" => "",
+            "lock" => "", "log" => "", "git" | "gitignore" => "",
+            _ => "",
         }
     }
 }
@@ -1166,6 +1176,33 @@ fn main() -> eframe::Result<()> {
     };
     eframe::run_native(
         "Heike", options,
-        Box::new(|cc| { egui_extras::install_image_loaders(&cc.egui_ctx); Ok(Box::new(Heike::new(cc.egui_ctx.clone()))) }),
+        Box::new(|cc| {
+            egui_extras::install_image_loaders(&cc.egui_ctx);
+
+            // Configure fonts to use bundled Nerd Font for icon rendering
+            let mut fonts = egui::FontDefinitions::default();
+
+            // Use bundled JetBrainsMono Nerd Font
+            let nerd_font_data = include_bytes!("../JetBrainsMonoNerdFont-Regular.ttf");
+            fonts.font_data.insert(
+                "nerd_font".to_owned(),
+                egui::FontData::from_static(nerd_font_data).into()
+            );
+
+            // Add to proportional and monospace families (prioritize Nerd Font)
+            fonts.families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "nerd_font".to_owned());
+
+            fonts.families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .insert(0, "nerd_font".to_owned());
+
+            cc.egui_ctx.set_fonts(fonts);
+
+            Ok(Box::new(Heike::new(cc.egui_ctx.clone())))
+        }),
     )
 }
