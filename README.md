@@ -8,6 +8,13 @@
 **Current Version:** 0.6.0 (The "Manager" Update)
 
 ### **Recent Updates** (2025-11-22)
+* ✅ **Comprehensive Preview Support:** Native file preview without OS dependencies
+* ✅ **Enhanced Syntax Highlighting:** Professional code highlighting using syntect (50+ languages)
+* ✅ **Markdown Rendering:** Native markdown preview with formatted headings and code blocks
+* ✅ **Archive Preview:** ZIP/TAR/GZ archive content listing
+* ✅ **PDF Support:** PDF metadata and text extraction preview
+* ✅ **Audio Metadata:** ID3 tag reading for MP3 files
+* ✅ **Hex Viewer:** Binary file preview with hex dump display
 * ✅ **Nerd Font Integration:** Icons now use Nerd Font glyphs for crisp, professional rendering
 * ✅ **Icon Display Improvements:** Enhanced icon rendering with consistent sizing (14pt) across all panes
 * ✅ **Navigation Fix:** Fixed pane navigation to work as proper Miller Columns - clicking left/right panes shifts content appropriately
@@ -68,11 +75,37 @@
 * **Selection Auto-Scroll:** Selected items automatically scroll into view
 
 ### **Preview Capabilities**
-* **Syntax Highlighting:** Basic syntax highlighting for code files (Rust, Python, JS, TS, TOML, JSON)
-* **Image Preview:** Async loading for PNG, JPG, WEBP, GIF, BMP
+**All preview features work natively without OS dependencies - pure Rust libraries only!**
+
+* **Enhanced Syntax Highlighting:** Professional code highlighting using syntect library
+  * Support for 50+ programming languages (Rust, Python, JS/TS, C/C++, Java, Go, Ruby, PHP, Swift, Kotlin, Scala, and many more)
+  * Theme-aware highlighting (adapts to light/dark mode)
+  * Full file content preview (no size limits)
+  * Smart syntax detection by file extension and content
+* **Markdown Rendering:** Native markdown preview with proper formatting
+  * Heading hierarchy (H1-H6) with size differentiation
+  * Code block and inline code formatting
+  * Paragraph spacing and text wrapping
+* **Image Preview:** Async loading for PNG, JPG, JPEG, GIF, WEBP, BMP, SVG, ICO
+* **PDF Preview:** Native PDF support without OS dependencies
+  * PDF metadata extraction (title, author, page count)
+  * Text content extraction and preview
+  * 2000 character preview limit with truncation indicator
+* **Archive Preview:** Native archive content listing
+  * ZIP archive support with file listing
+  * TAR/GZ/TGZ support with decompression
+  * Shows file names, sizes, and directory structure
+  * Visual file/folder icons in archive listing
+* **Audio Metadata:** MP3 ID3 tag reading
+  * Title, artist, album, year, genre display
+  * Album art detection and size info
+  * Framework ready for FLAC, OGG, M4A, WAV
+* **Binary File Viewer:** Hex dump display for unknown file types
+  * Offset + Hex + ASCII column layout
+  * 512-byte preview window
+  * Proper byte alignment and formatting
 * **Directory Preview:** Shows directory contents in preview pane with clickable navigation
-* **Binary Detection:** Safe handling of binary files
-* **Preview Status:** PDF placeholder ("not supported"), binary file indicators
+* **Smart Fallback System:** Text → Syntax Highlighting → Hex View
 
 ### **Visual & Icons**
 * **File Type Icons:** Nerd Font glyphs for professional icon rendering (50+ file types supported)
@@ -90,18 +123,22 @@
 * [ ] Icon size configuration option
 
 ### **Enhanced Syntax Highlighting**
-* [ ] Full syntax highlighting library integration (syntect or tree-sitter)
-* [ ] Language auto-detection
-* [ ] Configurable color schemes
+* [x] Full syntax highlighting library integration (syntect)
+* [x] Language auto-detection
+* [x] Theme-aware color schemes (light/dark mode)
 * [ ] Line numbers in code preview
+* [ ] Configurable custom color schemes
 
 ### **Extended Preview Support**
-* [ ] PDF preview integration
+* [x] PDF preview integration (metadata + text extraction)
+* [x] Audio file metadata display (MP3 ID3 tags)
+* [x] Archive contents preview (ZIP, TAR, GZ, TGZ)
+* [x] Markdown rendering
+* [x] Binary hex viewer
 * [ ] Video thumbnail generation
-* [ ] Audio file metadata display
-* [ ] Archive contents preview (ZIP, TAR, etc.)
-* [ ] Markdown rendering
-* [ ] HTML preview
+* [ ] PDF page rendering (currently text-only)
+* [ ] HTML preview with rendering
+* [ ] Office document preview (DOCX, XLSX, PPTX)
 
 ### **Hotkey & Keybinding Extensions**
 * [ ] Configurable keybindings

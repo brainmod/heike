@@ -18,6 +18,7 @@ use pulldown_cmark::{Parser, Event as MarkdownEvent, Tag, TagEnd, HeadingLevel};
 use zip::ZipArchive;
 use tar::Archive;
 use id3::TagLike;
+use lopdf::Document as PdfDocument;
 
 // --- Data Structures ---
 
@@ -1002,6 +1003,77 @@ impl Heike {
         }
     }
 
+    fn render_pdf_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        match PdfDocument::load(&entry.path) {
+            Ok(doc) => {
+                // Extract basic metadata
+                ui.heading("PDF Document");
+                ui.separator();
+
+                // Get document info from trailer
+                if let Ok(info_ref) = doc.trailer.get(b"Info") {
+                    if let Ok(info_id) = info_ref.as_reference() {
+                        if let Ok(info_obj) = doc.get_object(info_id) {
+                            if let Ok(info_dict) = info_obj.as_dict() {
+                                // Try to extract title
+                                if let Ok(title_obj) = info_dict.get(b"Title") {
+                                    if let Ok(title_bytes) = title_obj.as_str() {
+                                        if let Ok(title_str) = String::from_utf8(title_bytes.to_vec()) {
+                                            ui.label(format!("Title: {}", title_str));
+                                        }
+                                    }
+                                }
+                                // Try to extract author
+                                if let Ok(author_obj) = info_dict.get(b"Author") {
+                                    if let Ok(author_bytes) = author_obj.as_str() {
+                                        if let Ok(author_str) = String::from_utf8(author_bytes.to_vec()) {
+                                            ui.label(format!("Author: {}", author_str));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ui.label(format!("Pages: {}", doc.get_pages().len()));
+                ui.add_space(10.0);
+
+                // Try to extract text from the document
+                match pdf_extract::extract_text(&entry.path) {
+                    Ok(text) => {
+                        if text.trim().is_empty() {
+                            ui.label("(No extractable text content)");
+                        } else {
+                            ui.separator();
+                            ui.label("Content preview:");
+                            ui.add_space(5.0);
+
+                            egui::ScrollArea::vertical().id_salt("preview_pdf").show(ui, |ui| {
+                                // Limit preview to first 2000 characters
+                                let preview_text = if text.len() > 2000 {
+                                    format!("{}\n\n--- Preview truncated, showing first 2000 characters ---", &text[..2000])
+                                } else {
+                                    text
+                                };
+
+                                for line in preview_text.lines() {
+                                    ui.label(line);
+                                }
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        ui.colored_label(egui::Color32::YELLOW, format!("Could not extract text: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                ui.colored_label(egui::Color32::RED, format!("Failed to load PDF: {}", e));
+            }
+        }
+    }
+
     fn render_preview(&self, ui: &mut egui::Ui, next_navigation: &std::cell::RefCell<Option<PathBuf>>, pending_selection: &std::cell::RefCell<Option<PathBuf>>) {
         let idx = match self.selected_index {
             Some(i) => i, None => { ui.centered_and_justified(|ui| { ui.label("No file selected"); }); return; }
@@ -1089,9 +1161,9 @@ impl Heike {
             return;
         }
 
-        // PDF placeholder
+        // PDF preview
         if matches!(entry.extension.as_str(), "pdf") {
-            ui.centered_and_justified(|ui| { ui.label("📕 PDF Preview Not Supported Yet"); });
+            self.render_pdf_preview(ui, entry);
             return;
         }
 
