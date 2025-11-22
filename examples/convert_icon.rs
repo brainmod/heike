@@ -14,7 +14,15 @@ fn main() {
     let mut pixmap = tiny_skia::Pixmap::new(size, size).unwrap();
 
     let rtree = resvg::Tree::from_usvg(&tree);
-    rtree.render(resvg::tiny_skia::Transform::identity(), &mut pixmap.as_mut());
+    let svg_size = rtree.size;
+
+    // Calculate scale to fit SVG into the target size
+    let scale_x = size as f32 / svg_size.width();
+    let scale_y = size as f32 / svg_size.height();
+    let scale = scale_x.min(scale_y); // Maintain aspect ratio
+
+    let transform = tiny_skia::Transform::from_scale(scale, scale);
+    rtree.render(transform, &mut pixmap.as_mut());
 
     pixmap.save_png("heike_icon.png")
         .expect("Failed to save PNG");
