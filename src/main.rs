@@ -7,7 +7,7 @@ use std::env;
 use std::io::Read;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use notify::{Watcher, RecursiveMode, Event};
 use std::sync::mpsc::channel;
 
@@ -48,6 +48,8 @@ impl FileEntry {
     }
 
     fn get_icon(&self) -> &str {
+        // Using emoji icons for universal compatibility
+        // For better icon rendering, consider using Nerd Fonts with custom glyph mappings
         if self.is_dir { return "📁"; }
         match self.extension.as_str() {
             "rs" => "🦀", "toml" => "⚙️", "md" => "📝", "txt" => "📄",
@@ -85,16 +87,14 @@ enum IoResult { DirectoryLoaded(Vec<FileEntry>), ParentLoaded(Vec<FileEntry>), E
 fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<FileEntry>, std::io::Error> {
     let mut entries = Vec::new();
     let read_dir = fs::read_dir(path)?;
-    for entry_result in read_dir {
-        if let Ok(entry) = entry_result {
-            let path = entry.path();
-            if !show_hidden {
-                if let Some(name) = path.file_name() {
-                    if name.to_string_lossy().starts_with('.') { continue; }
-                }
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if !show_hidden {
+            if let Some(name) = path.file_name() {
+                if name.to_string_lossy().starts_with('.') { continue; }
             }
-            if let Some(file_entry) = FileEntry::from_path(path) { entries.push(file_entry); }
         }
+        if let Some(file_entry) = FileEntry::from_path(path) { entries.push(file_entry); }
     }
     entries.sort_by(|a, b| {
         if a.is_dir != b.is_dir { return b.is_dir.cmp(&a.is_dir); }
@@ -108,7 +108,7 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
     let mut q_chars = query.chars();
     let mut q_char = match q_chars.next() { Some(c) => c, None => return true };
     for t_char in text.chars() {
-        if t_char.to_ascii_lowercase() == q_char.to_ascii_lowercase() {
+        if t_char.eq_ignore_ascii_case(&q_char) {
             q_char = match q_chars.next() { Some(c) => c, None => return true };
         }
     }
@@ -130,6 +130,7 @@ struct Heike {
     // Navigation State
     selected_index: Option<usize>,
     multi_selection: HashSet<PathBuf>,
+    directory_selections: HashMap<PathBuf, usize>, // Track last selected index per directory
     
     // Mode State
     mode: AppMode,
@@ -199,6 +200,7 @@ impl Heike {
             parent_entries: Vec::new(),
             selected_index: Some(0),
             multi_selection: HashSet::new(),
+            directory_selections: HashMap::new(),
             mode: AppMode::Normal,
             command_buffer: String::new(),
             focus_input: false,
@@ -305,6 +307,12 @@ impl Heike {
                     self.all_entries = entries;
                     self.is_loading = false;
                     self.apply_filter();
+                    // Validate selection after loading
+                    if let Some(idx) = self.selected_index {
+                        if idx >= self.visible_entries.len() && !self.visible_entries.is_empty() {
+                            self.selected_index = Some(self.visible_entries.len() - 1);
+                        }
+                    }
                 }
                 IoResult::ParentLoaded(entries) => { self.parent_entries = entries; }
                 IoResult::Error(msg) => {
@@ -321,8 +329,13 @@ impl Heike {
 
     fn navigate_to(&mut self, path: PathBuf) {
         if path.is_dir() {
+            // Save current selection before navigating away
+            if let Some(idx) = self.selected_index {
+                self.directory_selections.insert(self.current_path.clone(), idx);
+            }
+
             self.current_path = path.clone();
-            
+
             if self.history_index < self.history.len() - 1 {
                 self.history.truncate(self.history_index + 1);
             }
@@ -330,21 +343,27 @@ impl Heike {
             self.history_index = self.history.len() - 1;
 
             self.finish_navigation();
-        } else {
-            if let Err(e) = open::that(&path) {
-                self.error_message = Some(format!("Could not open file: {}", e));
-            }
+        } else if let Err(e) = open::that(&path) {
+            self.error_message = Some(format!("Could not open file: {}", e));
         }
     }
 
     fn navigate_up(&mut self) {
         if let Some(parent) = self.current_path.parent() {
+            // Save current selection before navigating up
+            if let Some(idx) = self.selected_index {
+                self.directory_selections.insert(self.current_path.clone(), idx);
+            }
             self.navigate_to(parent.to_path_buf());
         }
     }
 
     fn navigate_back(&mut self) {
         if self.history_index > 0 {
+            // Save current selection before navigating back
+            if let Some(idx) = self.selected_index {
+                self.directory_selections.insert(self.current_path.clone(), idx);
+            }
             self.history_index -= 1;
             self.current_path = self.history[self.history_index].clone();
             self.finish_navigation();
@@ -353,6 +372,10 @@ impl Heike {
 
     fn navigate_forward(&mut self) {
         if self.history_index < self.history.len() - 1 {
+            // Save current selection before navigating forward
+            if let Some(idx) = self.selected_index {
+                self.directory_selections.insert(self.current_path.clone(), idx);
+            }
             self.history_index += 1;
             self.current_path = self.history[self.history_index].clone();
             self.finish_navigation();
@@ -363,7 +386,8 @@ impl Heike {
         self.command_buffer.clear();
         self.mode = AppMode::Normal;
         self.multi_selection.clear();
-        self.selected_index = Some(0);
+        // Restore saved selection for this directory, or default to 0
+        self.selected_index = self.directory_selections.get(&self.current_path).copied().or(Some(0));
         self.request_refresh();
     }
 
@@ -404,14 +428,13 @@ impl Heike {
                     } else {
                         errors.push("Copying directories not supported in  Heike (lite)".into());
                     }
+                } else if op == ClipboardOp::Copy {
+                    if let Err(e) = fs::copy(src, &dest) { errors.push(format!("Copy file failed: {}", e)); }
+                    else { count += 1; }
+                } else if let Err(e) = fs::rename(src, &dest) {
+                    errors.push(format!("Move file failed: {}", e));
                 } else {
-                    if op == ClipboardOp::Copy {
-                        if let Err(e) = fs::copy(src, &dest) { errors.push(format!("Copy file failed: {}", e)); }
-                        else { count += 1; }
-                    } else {
-                        if let Err(e) = fs::rename(src, &dest) { errors.push(format!("Move file failed: {}", e)); }
-                        else { count += 1; }
-                    }
+                    count += 1;
                 }
             }
         }
@@ -531,10 +554,15 @@ impl Heike {
                 match self.mode {
                     AppMode::Rename => self.perform_rename(),
                     AppMode::Command => self.execute_command(ctx),
+                    AppMode::Filtering => {
+                        // Finalize search and allow navigation in filtered results
+                        self.mode = AppMode::Normal;
+                        // Keep the filtered results
+                    }
                     _ => {}
                 }
             }
-            if self.mode == AppMode::Filtering && ctx.input(|i| i.pointer.any_pressed()) == false {
+            if self.mode == AppMode::Filtering && !ctx.input(|i| i.pointer.any_pressed()) {
                 // Implicitly handled
             }
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -826,15 +854,27 @@ impl eframe::App for Heike {
             ui.vertical_centered(|ui| { ui.heading("Parent"); });
             ui.separator();
             egui::ScrollArea::vertical().id_salt("parent_scroll").show(ui, |ui| {
-                for entry in &self.parent_entries {
-                    let is_active = entry.path == self.current_path;
-                    let text = format!("{} {}", entry.get_icon(), entry.name);
-                    let text_color = if is_active { egui::Color32::from_rgb(100, 200, 255) } else { ui.visuals().weak_text_color() };
-                    
-                    if ui.add(egui::Label::new(egui::RichText::new(text).color(text_color)).sense(egui::Sense::click())).clicked() {
-                         *next_navigation.borrow_mut() = Some(entry.path.clone());
-                    }
-                }
+                use egui_extras::{TableBuilder, Column};
+                TableBuilder::new(ui).striped(true).resizable(false)
+                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                    .column(Column::auto().at_least(30.0))
+                    .column(Column::remainder())
+                    .body(|body| {
+                        body.rows(24.0, self.parent_entries.len(), |mut row| {
+                            let entry = &self.parent_entries[row.index()];
+                            let is_active = entry.path == self.current_path;
+
+                            if is_active { row.set_selected(true); }
+
+                            row.col(|ui| { ui.label(entry.get_icon()); });
+                            row.col(|ui| {
+                                let text_color = if is_active { egui::Color32::from_rgb(100, 200, 255) } else { ui.visuals().text_color() };
+                                if ui.selectable_label(is_active, egui::RichText::new(&entry.name).color(text_color)).clicked() {
+                                    *next_navigation.borrow_mut() = Some(entry.path.clone());
+                                }
+                            });
+                        });
+                    });
             });
         });
 
@@ -911,11 +951,17 @@ impl eframe::App for Heike {
 
             egui::ScrollArea::vertical().id_salt("current_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 use egui_extras::{TableBuilder, Column};
-                TableBuilder::new(ui).striped(true).resizable(true)
+                let mut table = TableBuilder::new(ui).striped(true).resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::auto().at_least(30.0))
-                    .column(Column::remainder())
-                    .header(20.0, |mut header| { header.col(|ui| { ui.label(""); }); header.col(|ui| { ui.label("Name"); }); })
+                    .column(Column::remainder());
+
+                // Scroll to selected row if there is one
+                if let Some(idx) = self.selected_index {
+                    table = table.scroll_to_row(idx, None);
+                }
+
+                table.header(20.0, |mut header| { header.col(|ui| { ui.label(""); }); header.col(|ui| { ui.label("Name"); }); })
                     .body(|body| {
                         body.rows(24.0, self.visible_entries.len(), |mut row| {
                             let row_index = row.index();
@@ -924,7 +970,7 @@ impl eframe::App for Heike {
                             let is_multi_selected = self.multi_selection.contains(&entry.path);
                             let is_cut = self.clipboard_op == Some(ClipboardOp::Cut) && self.clipboard.contains(&entry.path);
 
-                            if is_multi_selected { row.set_selected(true); } else if is_focused { row.set_selected(true); }
+                            if is_multi_selected || is_focused { row.set_selected(true); }
 
                             // Icon column
                             row.col(|ui| { ui.label(entry.get_icon()); });
