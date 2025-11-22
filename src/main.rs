@@ -8,8 +8,16 @@ use std::io::Read;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use std::collections::HashSet;
+use notify::{Watcher, RecursiveMode, Event};
+use std::sync::mpsc::channel;
 
 // --- Data Structures ---
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Theme {
+    Light,
+    Dark,
+}
 
 #[derive(Clone, Debug)]
 struct FileEntry {
@@ -136,6 +144,7 @@ struct Heike {
     error_message: Option<String>,
     info_message: Option<String>, // New
     show_hidden: bool,
+    theme: Theme,
     is_loading: bool,
     last_g_press: Option<Instant>,
     last_selection_change: Instant,
@@ -143,6 +152,11 @@ struct Heike {
     // Async Communication
     command_tx: Sender<IoCommand>,
     result_rx: Receiver<IoResult>,
+
+    // File System Watcher
+    watcher: Option<Box<dyn Watcher>>,
+    watcher_rx: Receiver<Result<Event, notify::Error>>,
+    watched_path: Option<PathBuf>,
 }
 
 impl Heike {
@@ -153,6 +167,7 @@ impl Heike {
 
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
         let (res_tx, res_rx) = std::sync::mpsc::channel();
+        let (_watch_tx, watch_rx) = channel();
 
         let ctx_clone = ctx.clone();
         thread::spawn(move || {
@@ -192,11 +207,15 @@ impl Heike {
             error_message: None,
             info_message: None,           // Init
             show_hidden: false,
+            theme: Theme::Dark,
             is_loading: false,
             last_g_press: None,
             last_selection_change: Instant::now(),
             command_tx: cmd_tx,
             result_rx: res_rx,
+            watcher: None,
+            watcher_rx: watch_rx,
+            watched_path: None,
         };
         
         app.request_refresh();
@@ -225,8 +244,58 @@ impl Heike {
         } else {
             self.visible_entries = self.all_entries.clone();
         }
-        if self.visible_entries.is_empty() { self.selected_index = None; } 
+        if self.visible_entries.is_empty() { self.selected_index = None; }
         else { self.selected_index = Some(0); }
+    }
+
+    fn setup_watcher(&mut self, ctx: &egui::Context) {
+        // Only setup if path changed
+        if self.watched_path.as_ref() == Some(&self.current_path) {
+            return;
+        }
+
+        // Get the channel sender for watcher events
+        let (tx, rx) = channel();
+        self.watcher_rx = rx;
+
+        // Create the watcher
+        let ctx_clone = ctx.clone();
+        match notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            let _ = tx.send(res);
+            ctx_clone.request_repaint();
+        }) {
+            Ok(mut watcher) => {
+                // Watch the current directory
+                if let Err(e) = watcher.watch(&self.current_path, RecursiveMode::NonRecursive) {
+                    self.error_message = Some(format!("Failed to watch directory: {}", e));
+                    self.watcher = None;
+                    self.watched_path = None;
+                } else {
+                    self.watcher = Some(Box::new(watcher));
+                    self.watched_path = Some(self.current_path.clone());
+                }
+            }
+            Err(e) => {
+                self.error_message = Some(format!("Failed to create watcher: {}", e));
+                self.watcher = None;
+                self.watched_path = None;
+            }
+        }
+    }
+
+    fn process_watcher_events(&mut self) {
+        while let Ok(event_result) = self.watcher_rx.try_recv() {
+            match event_result {
+                Ok(_event) => {
+                    // File system changed, trigger refresh
+                    self.request_refresh();
+                }
+                Err(e) => {
+                    // Watcher error, but don't show it to avoid spam
+                    eprintln!("Watcher error: {}", e);
+                }
+            }
+        }
     }
 
     fn process_async_results(&mut self) {
@@ -391,6 +460,39 @@ impl Heike {
         self.mode = AppMode::Normal;
         self.command_buffer.clear();
         self.request_refresh();
+    }
+
+    // --- Drag and Drop Handling ---
+
+    fn handle_dropped_files(&mut self, dropped_files: &[egui::DroppedFile]) {
+        let mut count = 0;
+        let mut errors = Vec::new();
+
+        for file in dropped_files {
+            if let Some(path) = &file.path {
+                let dest = self.current_path.join(path.file_name().unwrap_or_default());
+
+                // Copy the dropped file to current directory
+                if path.is_dir() {
+                    errors.push("Copying directories not supported".into());
+                } else {
+                    match fs::copy(path, &dest) {
+                        Ok(_) => count += 1,
+                        Err(e) => errors.push(format!("Copy failed: {}", e)),
+                    }
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            self.error_message = Some(errors.join(" | "));
+        } else if count > 0 {
+            self.info_message = Some(format!("Copied {} file(s)", count));
+        }
+
+        if count > 0 {
+            self.request_refresh();
+        }
     }
 
     // --- Input Handling ---
@@ -624,9 +726,24 @@ impl Heike {
 
 impl eframe::App for Heike {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply theme
+        match self.theme {
+            Theme::Light => ctx.set_visuals(egui::Visuals::light()),
+            Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+        }
+
+        self.setup_watcher(ctx);
+        self.process_watcher_events();
         self.process_async_results();
         self.handle_input(ctx);
-        
+
+        // Handle files dropped from external sources
+        ctx.input(|i| {
+            if !i.raw.dropped_files.is_empty() {
+                self.handle_dropped_files(&i.raw.dropped_files);
+            }
+        });
+
         if self.mode == AppMode::Filtering {
             let old_len = self.visible_entries.len();
             self.apply_filter();
@@ -635,6 +752,7 @@ impl eframe::App for Heike {
 
         let next_navigation = std::cell::RefCell::new(None);
         let next_selection = std::cell::RefCell::new(None);
+        let context_action = std::cell::RefCell::new(None::<Box<dyn FnOnce(&mut Self)>>);
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.add_space(4.0);
@@ -658,8 +776,21 @@ impl eframe::App for Heike {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.checkbox(&mut self.show_hidden, "Hidden (.)").changed() { self.request_refresh(); }
+
+                    // Theme toggle
+                    let theme_icon = match self.theme {
+                        Theme::Light => "🌙",
+                        Theme::Dark => "☀",
+                    };
+                    if ui.button(theme_icon).on_hover_text("Toggle theme").clicked() {
+                        self.theme = match self.theme {
+                            Theme::Light => Theme::Dark,
+                            Theme::Dark => Theme::Light,
+                        };
+                    }
+
                     if ui.button("?").clicked() { self.mode = AppMode::Help; }
-                    
+
                     // Mode Indicator
                     match self.mode {
                         AppMode::Normal => { ui.label("NORMAL"); },
@@ -714,7 +845,26 @@ impl eframe::App for Heike {
             self.render_preview(ui);
         });
 
+        // Visual feedback for drag and drop
+        let is_being_dragged_over = ctx.input(|i| !i.raw.hovered_files.is_empty());
+
         egui::CentralPanel::default().show(ctx, |ui| {
+            // Show drop zone overlay when files are being dragged over
+            if is_being_dragged_over {
+                let painter = ui.painter();
+                let rect = ui.available_rect_before_wrap();
+                painter.rect_stroke(
+                    rect,
+                    5.0,
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
+                    egui::epaint::StrokeKind::Outside,
+                );
+                ui.label(
+                    egui::RichText::new("📁 Drop files here to copy them to this directory")
+                        .size(16.0)
+                        .color(egui::Color32::from_rgb(100, 200, 255))
+                );
+            }
             // Help Modal
             if self.mode == AppMode::Help {
                  egui::Window::new("Help")
@@ -773,18 +923,107 @@ impl eframe::App for Heike {
                             let is_focused = self.selected_index == Some(row_index);
                             let is_multi_selected = self.multi_selection.contains(&entry.path);
                             let is_cut = self.clipboard_op == Some(ClipboardOp::Cut) && self.clipboard.contains(&entry.path);
-                            
+
                             if is_multi_selected { row.set_selected(true); } else if is_focused { row.set_selected(true); }
 
+                            // Icon column
                             row.col(|ui| { ui.label(entry.get_icon()); });
+
+                            // Name column with context menu
                             row.col(|ui| {
                                 let mut text = egui::RichText::new(&entry.name);
                                 if is_multi_selected { text = text.color(egui::Color32::LIGHT_BLUE); }
                                 if is_cut { text = text.color(egui::Color32::from_white_alpha(100)); } // Dimmed
-                                if ui.selectable_label(is_focused, text).clicked() {
+
+                                let response = ui.selectable_label(is_focused, text);
+
+                                if response.clicked() {
                                     *next_selection.borrow_mut() = Some(row_index);
                                     if entry.is_dir { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
                                 }
+
+                                // Context menu on right-click
+                                let entry_clone = entry.clone();
+                                response.context_menu(|ui| {
+                                    if ui.button("📂 Open").clicked() {
+                                        if entry_clone.is_dir {
+                                            *next_navigation.borrow_mut() = Some(entry_clone.path.clone());
+                                        } else {
+                                            let _ = open::that(&entry_clone.path);
+                                        }
+                                        ui.close();
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button("📋 Copy (y)").clicked() {
+                                        let path = entry_clone.path.clone();
+                                        *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
+                                            app.clipboard.clear();
+                                            app.clipboard.insert(path);
+                                            app.clipboard_op = Some(ClipboardOp::Copy);
+                                            app.info_message = Some("Copied 1 file".into());
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    if ui.button("✂️ Cut (x)").clicked() {
+                                        let path = entry_clone.path.clone();
+                                        *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
+                                            app.clipboard.clear();
+                                            app.clipboard.insert(path);
+                                            app.clipboard_op = Some(ClipboardOp::Cut);
+                                            app.info_message = Some("Cut 1 file".into());
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    if ui.button("📥 Paste (p)").clicked() {
+                                        *context_action.borrow_mut() = Some(Box::new(|app: &mut Self| {
+                                            app.paste_clipboard();
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button("✏️ Rename (r)").clicked() {
+                                        *next_selection.borrow_mut() = Some(row_index);
+                                        let name = entry_clone.name.clone();
+                                        *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
+                                            app.command_buffer = name;
+                                            app.mode = AppMode::Rename;
+                                            app.focus_input = true;
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    if ui.button("🗑️ Delete (d)").clicked() {
+                                        *next_selection.borrow_mut() = Some(row_index);
+                                        *context_action.borrow_mut() = Some(Box::new(|app: &mut Self| {
+                                            app.mode = AppMode::DeleteConfirm;
+                                        }));
+                                        ui.close();
+                                    }
+
+                                    ui.separator();
+
+                                    if ui.button("ℹ️ Properties").clicked() {
+                                        let size = entry_clone.size;
+                                        let modified = entry_clone.modified;
+                                        let is_dir = entry_clone.is_dir;
+                                        *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
+                                            app.info_message = Some(format!(
+                                                "{} | {} | Modified: {}",
+                                                if is_dir { "Directory" } else { "File" },
+                                                bytesize::ByteSize(size),
+                                                chrono::DateTime::<chrono::Local>::from(modified)
+                                                    .format("%Y-%m-%d %H:%M")
+                                            ));
+                                        }));
+                                        ui.close();
+                                    }
+                                });
                             });
                         });
                     });
@@ -793,12 +1032,29 @@ impl eframe::App for Heike {
 
         if let Some(idx) = next_selection.into_inner() { self.selected_index = Some(idx); }
         if let Some(path) = next_navigation.into_inner() { self.navigate_to(path); }
+        if let Some(action) = context_action.into_inner() { action(self); }
     }
 }
 
 fn main() -> eframe::Result<()> {
+    // Load the app icon
+    let icon_bytes = include_bytes!("../heike_icon.png");
+    let icon_image = image::load_from_memory(icon_bytes)
+        .expect("Failed to load icon")
+        .to_rgba8();
+    let (icon_width, icon_height) = icon_image.dimensions();
+    let icon_data = egui::IconData {
+        rgba: icon_image.into_raw(),
+        width: icon_width,
+        height: icon_height,
+    };
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1200.0, 700.0]).with_title("Heike"),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1200.0, 700.0])
+            .with_title("Heike")
+            .with_icon(icon_data)
+            .with_drag_and_drop(true),
         ..Default::default()
     };
     eframe::run_native(

@@ -51,22 +51,21 @@
   * r (Rename with modal)  
 * **Feedback:** "Info" and "Error" message toast system in the bottom bar.
 
-## **Phase 7: The "Polished" Experience (Next Steps)**
+## **Phase 7: The "Polished" Experience (Complete)**
 
 *Focus: UX refinement and closing the gap with native file managers.*
 
-* \[ \] **App Icon Integration:**  
-  * Use the new icon.svg (convert to .ico/.png) for the window title bar.  
-* \[ \] **Drag & Drop:**  
-  * Allow dragging files from Heike to external apps (Explorer/Finder).  
-  * Allow dropping files into Heike to move/copy them.  
-* \[ \] **Context Menu:**  
-  * Right-click menu for mouse users (Open, Copy, Rename, Properties).  
-* \[ \] **Watcher:**  
-  * Integrate notify crate to auto-refresh when files are changed externally.  
-* \[ \] **Theme System:**  
-  * Allow toggling Light/Dark mode.  
-  * Configurable accent colors (currently hardcoded "Rust Orange" / "Light Blue").
+* \[x\] **App Icon Integration:**
+  * Use the new icon.svg (convert to .ico/.png) for the window title bar.
+* \[x\] **Drag & Drop:**
+  * Allow dropping files into Heike from external apps to copy them.
+  * Note: Dragging OUT to external apps requires OS-level support not available in egui.
+* \[x\] **Context Menu:**
+  * Right-click menu for mouse users (Open, Copy, Cut, Paste, Rename, Delete, Properties).
+* \[x\] **Watcher:**
+  * Integrate notify crate to auto-refresh when files are changed externally.
+* \[x\] **Theme System:**
+  * Light/Dark mode toggle with sun/moon button in toolbar.
 
 ## **Phase 8: Advanced Features (Long Term)**
 
