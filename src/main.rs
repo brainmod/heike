@@ -168,6 +168,7 @@ struct Heike {
     is_loading: bool,
     last_g_press: Option<Instant>,
     last_selection_change: Instant,
+    disable_autoscroll: bool,
 
     // Async Communication
     command_tx: Sender<IoCommand>,
@@ -237,6 +238,7 @@ impl Heike {
             is_loading: false,
             last_g_press: None,
             last_selection_change: Instant::now(),
+            disable_autoscroll: false,
             command_tx: cmd_tx,
             result_rx: res_rx,
             watcher: None,
@@ -683,10 +685,12 @@ impl Heike {
         let mut new_index = current;
 
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J)) {
-            new_index = (current + 1).min(max_idx); changed = true;
+            new_index = if current >= max_idx { 0 } else { current + 1 };
+            changed = true;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K)) {
-            new_index = current.saturating_sub(1); changed = true;
+            new_index = if current == 0 { max_idx } else { current - 1 };
+            changed = true;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) { self.navigate_up(); }
         if ctx.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::L)) {
@@ -712,6 +716,7 @@ impl Heike {
         if changed {
             self.selected_index = Some(new_index);
             self.last_selection_change = Instant::now();
+            self.disable_autoscroll = false; // Re-enable autoscroll on keyboard navigation
             if self.mode == AppMode::Visual {
                 if let Some(entry) = self.visible_entries.get(new_index) { self.multi_selection.insert(entry.path.clone()); }
             }
@@ -1363,16 +1368,25 @@ impl eframe::App for Heike {
                 });
             }
 
+            // Detect manual scrolling in the central panel
+            if ui.ui_contains_pointer() {
+                if ctx.input(|i| i.smooth_scroll_delta != egui::Vec2::ZERO || i.raw_scroll_delta != egui::Vec2::ZERO) {
+                    self.disable_autoscroll = true;
+                }
+            }
+
             egui::ScrollArea::vertical().id_salt("current_scroll").auto_shrink([false, false]).show(ui, |ui| {
                 use egui_extras::{TableBuilder, Column};
-                let mut table = TableBuilder::new(ui).striped(true).resizable(true)
+                let mut table = TableBuilder::new(ui).striped(true).resizable(false)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::auto().at_least(30.0))
+                    .column(Column::initial(30.0))
                     .column(Column::remainder());
 
-                // Scroll to selected row if there is one
-                if let Some(idx) = self.selected_index {
-                    table = table.scroll_to_row(idx, None);
+                // Only scroll to selected row if autoscroll is not disabled
+                if !self.disable_autoscroll {
+                    if let Some(idx) = self.selected_index {
+                        table = table.scroll_to_row(idx, None);
+                    }
                 }
 
                 table.header(20.0, |mut header| { header.col(|ui| { ui.label(""); }); header.col(|ui| { ui.label("Name"); }); })
@@ -1399,9 +1413,16 @@ impl eframe::App for Heike {
 
                                 let response = ui.selectable_label(is_focused, text);
 
+                                // Single click for selection only
                                 if response.clicked() {
                                     *next_selection.borrow_mut() = Some(row_index);
-                                    if entry.is_dir { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
+                                }
+
+                                // Double click to open/navigate
+                                if response.double_clicked() {
+                                    if let Some(entry) = self.visible_entries.get(row_index) {
+                                        *next_navigation.borrow_mut() = Some(entry.path.clone());
+                                    }
                                 }
 
                                 // Context menu on right-click

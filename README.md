@@ -8,6 +8,15 @@
 **Current Version:** 0.6.0 (The "Manager" Update)
 
 ### **Recent Updates** (2025-11-22)
+
+#### **Layout & Interaction Improvements**
+* ✅ **Fixed Column Widths:** Set reasonable defaults and disabled auto-resize based on content for more stable layout
+* ✅ **Smart Autoscroll:** Autoscroll now temporarily disables when user manually scrolls via mouse wheel or scroll bar
+* ✅ **Wrapped Navigation:** Arrow keys and hjkl now wrap around at top/bottom of file list
+* ✅ **Double-Click to Open:** Changed file/directory opening to require Enter or double-click (single-click now only selects)
+* ✅ **Arrow Key Bindings:** Arrow keys bound to same actions as hjkl (Up/Down = j/k navigation)
+
+#### **Preview & Display**
 * ✅ **Comprehensive Preview Support:** Native file preview without OS dependencies
 * ✅ **Enhanced Syntax Highlighting:** Professional code highlighting using syntect (50+ languages)
 * ✅ **Markdown Rendering:** Native markdown preview with formatted headings and code blocks
@@ -44,7 +53,8 @@
   * `:`: Command mode
   * `Esc`: Return to normal mode
 * **Mouse Support:**
-  * Click to navigate
+  * Click to select
+  * Double-click to open/navigate
   * Right-click context menu (Open, Copy, Cut, Paste, Rename, Delete, Properties)
   * Drag & Drop files from external applications
 * **Browser-style History:** Alt+Left/Right for Back/Forward
@@ -72,7 +82,7 @@
 * **Non-blocking UI:** Spinners and loading states for smooth experience
 * **File System Watcher:** Auto-refresh when files change externally
 * **Debounced Loading:** 200ms delay to prevent stuttering during fast scrolling
-* **Selection Auto-Scroll:** Selected items automatically scroll into view
+* **Smart Auto-Scroll:** Selected items automatically scroll into view, but intelligently disables when user manually scrolls
 
 ### **Preview Capabilities**
 **All preview features work natively without OS dependencies - pure Rust libraries only!**
