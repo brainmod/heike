@@ -837,27 +837,15 @@ impl eframe::App for Heike {
                             // Icon column
                             row.col(|ui| { ui.label(entry.get_icon()); });
 
-                            // Name column with drag source support
+                            // Name column
                             row.col(|ui| {
                                 let mut text = egui::RichText::new(&entry.name);
                                 if is_multi_selected { text = text.color(egui::Color32::LIGHT_BLUE); }
                                 if is_cut { text = text.color(egui::Color32::from_white_alpha(100)); } // Dimmed
 
-                                // Enable dragging files to external apps
-                                let response = ui.dnd_drag_source(egui::Id::new(("file_drag", row_index)), egui::Vec2::new(200.0, 24.0), |ui| {
-                                    ui.selectable_label(is_focused, text)
-                                });
-
-                                if response.response.clicked() {
+                                if ui.selectable_label(is_focused, text).clicked() {
                                     *next_selection.borrow_mut() = Some(row_index);
                                     if entry.is_dir { *next_navigation.borrow_mut() = Some(entry.path.clone()); }
-                                }
-
-                                // Set the file path for drag and drop
-                                if response.response.drag_started() {
-                                    ui.ctx().output_mut(|o| {
-                                        o.copied_text = entry.path.to_string_lossy().to_string();
-                                    });
                                 }
                             });
                         });

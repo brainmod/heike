@@ -58,8 +58,8 @@
 * \[x\] **App Icon Integration:**
   * Use the new icon.svg (convert to .ico/.png) for the window title bar.
 * \[x\] **Drag & Drop:**
-  * Allow dragging files from Heike to external apps (Explorer/Finder).
-  * Allow dropping files into Heike to copy them.
+  * Allow dropping files into Heike from external apps to copy them.
+  * Note: Dragging OUT to external apps requires OS-level support not available in egui.
 * \[ \] **Context Menu:**
   * Right-click menu for mouse users (Open, Copy, Rename, Properties).
 * \[ \] **Watcher:**
