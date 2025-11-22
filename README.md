@@ -7,6 +7,11 @@
 
 **Current Version:** 0.6.0 (The "Manager" Update)
 
+### **Recent Updates** (2025-11-22)
+* ✅ **Icon Display Improvements:** Enhanced icon rendering with consistent sizing (14pt) across all panes
+* ✅ **Navigation Fix:** Corrected pane navigation behavior - clicking the active directory in parent pane now navigates up
+* ✅ **UX Enhancement:** Improved Miller column navigation to match expected file manager behavior
+
 ## **Core Features**
 
 ### **Interface & Layout**
@@ -77,9 +82,10 @@
 ## **Planned Enhancements**
 
 ### **Icon System Improvements**
+* [x] Consistent icon sizing across all panes (14pt)
 * [ ] Nerd Font support for professional icon rendering
 * [ ] Custom icon themes
-* [ ] Icon size configuration
+* [ ] Icon size configuration option
 
 ### **Enhanced Syntax Highlighting**
 * [ ] Full syntax highlighting library integration (syntect or tree-sitter)
