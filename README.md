@@ -51,7 +51,7 @@
   * r (Rename with modal)  
 * **Feedback:** "Info" and "Error" message toast system in the bottom bar.
 
-## **Phase 7: The "Polished" Experience (In Progress)**
+## **Phase 7: The "Polished" Experience (Complete)**
 
 *Focus: UX refinement and closing the gap with native file managers.*
 
@@ -62,11 +62,10 @@
   * Note: Dragging OUT to external apps requires OS-level support not available in egui.
 * \[x\] **Context Menu:**
   * Right-click menu for mouse users (Open, Copy, Cut, Paste, Rename, Delete, Properties).
-* \[ \] **Watcher:**
+* \[x\] **Watcher:**
   * Integrate notify crate to auto-refresh when files are changed externally.
-* \[ \] **Theme System:**
-  * Allow toggling Light/Dark mode.
-  * Configurable accent colors (currently hardcoded "Rust Orange" / "Light Blue").
+* \[x\] **Theme System:**
+  * Light/Dark mode toggle with sun/moon button in toolbar.
 
 ## **Phase 8: Advanced Features (Long Term)**
 

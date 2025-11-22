@@ -8,8 +8,16 @@ use std::io::Read;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use std::collections::HashSet;
+use notify::{Watcher, RecursiveMode, Event};
+use std::sync::mpsc::channel;
 
 // --- Data Structures ---
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Theme {
+    Light,
+    Dark,
+}
 
 #[derive(Clone, Debug)]
 struct FileEntry {
@@ -136,6 +144,7 @@ struct Heike {
     error_message: Option<String>,
     info_message: Option<String>, // New
     show_hidden: bool,
+    theme: Theme,
     is_loading: bool,
     last_g_press: Option<Instant>,
     last_selection_change: Instant,
@@ -143,6 +152,11 @@ struct Heike {
     // Async Communication
     command_tx: Sender<IoCommand>,
     result_rx: Receiver<IoResult>,
+
+    // File System Watcher
+    watcher: Option<Box<dyn Watcher>>,
+    watcher_rx: Receiver<Result<Event, notify::Error>>,
+    watched_path: Option<PathBuf>,
 }
 
 impl Heike {
@@ -153,6 +167,7 @@ impl Heike {
 
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
         let (res_tx, res_rx) = std::sync::mpsc::channel();
+        let (_watch_tx, watch_rx) = channel();
 
         let ctx_clone = ctx.clone();
         thread::spawn(move || {
@@ -192,11 +207,15 @@ impl Heike {
             error_message: None,
             info_message: None,           // Init
             show_hidden: false,
+            theme: Theme::Dark,
             is_loading: false,
             last_g_press: None,
             last_selection_change: Instant::now(),
             command_tx: cmd_tx,
             result_rx: res_rx,
+            watcher: None,
+            watcher_rx: watch_rx,
+            watched_path: None,
         };
         
         app.request_refresh();
@@ -225,8 +244,58 @@ impl Heike {
         } else {
             self.visible_entries = self.all_entries.clone();
         }
-        if self.visible_entries.is_empty() { self.selected_index = None; } 
+        if self.visible_entries.is_empty() { self.selected_index = None; }
         else { self.selected_index = Some(0); }
+    }
+
+    fn setup_watcher(&mut self, ctx: &egui::Context) {
+        // Only setup if path changed
+        if self.watched_path.as_ref() == Some(&self.current_path) {
+            return;
+        }
+
+        // Get the channel sender for watcher events
+        let (tx, rx) = channel();
+        self.watcher_rx = rx;
+
+        // Create the watcher
+        let ctx_clone = ctx.clone();
+        match notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+            let _ = tx.send(res);
+            ctx_clone.request_repaint();
+        }) {
+            Ok(mut watcher) => {
+                // Watch the current directory
+                if let Err(e) = watcher.watch(&self.current_path, RecursiveMode::NonRecursive) {
+                    self.error_message = Some(format!("Failed to watch directory: {}", e));
+                    self.watcher = None;
+                    self.watched_path = None;
+                } else {
+                    self.watcher = Some(Box::new(watcher));
+                    self.watched_path = Some(self.current_path.clone());
+                }
+            }
+            Err(e) => {
+                self.error_message = Some(format!("Failed to create watcher: {}", e));
+                self.watcher = None;
+                self.watched_path = None;
+            }
+        }
+    }
+
+    fn process_watcher_events(&mut self) {
+        while let Ok(event_result) = self.watcher_rx.try_recv() {
+            match event_result {
+                Ok(_event) => {
+                    // File system changed, trigger refresh
+                    self.request_refresh();
+                }
+                Err(e) => {
+                    // Watcher error, but don't show it to avoid spam
+                    eprintln!("Watcher error: {}", e);
+                }
+            }
+        }
     }
 
     fn process_async_results(&mut self) {
@@ -657,6 +726,14 @@ impl Heike {
 
 impl eframe::App for Heike {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply theme
+        match self.theme {
+            Theme::Light => ctx.set_visuals(egui::Visuals::light()),
+            Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+        }
+
+        self.setup_watcher(ctx);
+        self.process_watcher_events();
         self.process_async_results();
         self.handle_input(ctx);
 
@@ -699,8 +776,21 @@ impl eframe::App for Heike {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.checkbox(&mut self.show_hidden, "Hidden (.)").changed() { self.request_refresh(); }
+
+                    // Theme toggle
+                    let theme_icon = match self.theme {
+                        Theme::Light => "🌙",
+                        Theme::Dark => "☀",
+                    };
+                    if ui.button(theme_icon).on_hover_text("Toggle theme").clicked() {
+                        self.theme = match self.theme {
+                            Theme::Light => Theme::Dark,
+                            Theme::Dark => Theme::Light,
+                        };
+                    }
+
                     if ui.button("?").clicked() { self.mode = AppMode::Help; }
-                    
+
                     // Mode Indicator
                     match self.mode {
                         AppMode::Normal => { ui.label("NORMAL"); },
