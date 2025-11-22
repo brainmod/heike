@@ -10,6 +10,14 @@ use std::thread;
 use std::collections::{HashSet, HashMap};
 use notify::{Watcher, RecursiveMode, Event};
 use std::sync::mpsc::channel;
+use syntect::parsing::SyntaxSet;
+use syntect::highlighting::ThemeSet;
+use syntect::easy::HighlightLines;
+use syntect::util::LinesWithEndings;
+use pulldown_cmark::{Parser, Event as MarkdownEvent, Tag, TagEnd, HeadingLevel};
+use zip::ZipArchive;
+use tar::Archive;
+use id3::TagLike;
 
 // --- Data Structures ---
 
@@ -169,6 +177,10 @@ struct Heike {
     watcher: Option<Box<dyn Watcher>>,
     watcher_rx: Receiver<Result<Event, notify::Error>>,
     watched_path: Option<PathBuf>,
+
+    // Syntax Highlighting
+    syntax_set: SyntaxSet,
+    theme_set: ThemeSet,
 }
 
 impl Heike {
@@ -230,6 +242,8 @@ impl Heike {
             watcher: None,
             watcher_rx: watch_rx,
             watched_path: None,
+            syntax_set: SyntaxSet::load_defaults_newlines(),
+            theme_set: ThemeSet::load_defaults(),
         };
         
         app.request_refresh();
@@ -704,6 +718,290 @@ impl Heike {
         }
     }
 
+    // --- Preview Helper Functions ---
+
+    fn render_syntax_highlighted(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        match fs::read_to_string(&entry.path) {
+            Ok(content) => {
+                let syntax = self.syntax_set
+                    .find_syntax_by_extension(&entry.extension)
+                    .or_else(|| self.syntax_set.find_syntax_by_first_line(&content))
+                    .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+
+                let theme_name = if self.theme == Theme::Dark { "base16-ocean.dark" } else { "base16-ocean.light" };
+                let theme = &self.theme_set.themes[theme_name];
+
+                egui::ScrollArea::vertical().id_salt("preview_code").show(ui, |ui| {
+                    let mut highlighter = HighlightLines::new(syntax, theme);
+
+                    for line in LinesWithEndings::from(&content) {
+                        let ranges = highlighter.highlight_line(line, &self.syntax_set).unwrap_or_default();
+
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            for (style, text) in ranges {
+                                let color = egui::Color32::from_rgb(
+                                    style.foreground.r,
+                                    style.foreground.g,
+                                    style.foreground.b,
+                                );
+                                ui.label(egui::RichText::new(text).color(color).monospace());
+                            }
+                        });
+                    }
+                });
+            }
+            Err(e) => {
+                ui.colored_label(egui::Color32::RED, format!("Read error: {}", e));
+            }
+        }
+    }
+
+    fn render_markdown_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        match fs::read_to_string(&entry.path) {
+            Ok(content) => {
+                egui::ScrollArea::vertical().id_salt("preview_md").show(ui, |ui| {
+                    let parser = Parser::new(&content);
+                    let mut in_code_block = false;
+                    let mut in_heading = false;
+                    let mut heading_level = 1;
+
+                    for event in parser {
+                        match event {
+                            MarkdownEvent::Start(tag) => {
+                                match tag {
+                                    Tag::Heading { level, .. } => {
+                                        in_heading = true;
+                                        heading_level = match level {
+                                            HeadingLevel::H1 => 1,
+                                            HeadingLevel::H2 => 2,
+                                            HeadingLevel::H3 => 3,
+                                            HeadingLevel::H4 => 4,
+                                            HeadingLevel::H5 => 5,
+                                            HeadingLevel::H6 => 6,
+                                        };
+                                    }
+                                    Tag::CodeBlock(_) => in_code_block = true,
+                                    Tag::Paragraph => {},
+                                    Tag::List(_) => {},
+                                    _ => {}
+                                }
+                            }
+                            MarkdownEvent::End(tag) => {
+                                match tag {
+                                    TagEnd::Heading(_) => {
+                                        in_heading = false;
+                                        ui.add_space(5.0);
+                                    }
+                                    TagEnd::CodeBlock => {
+                                        in_code_block = false;
+                                        ui.add_space(5.0);
+                                    }
+                                    TagEnd::Paragraph => ui.add_space(5.0),
+                                    _ => {}
+                                }
+                            }
+                            MarkdownEvent::Text(text) => {
+                                if in_heading {
+                                    let size = match heading_level {
+                                        1 => 24.0,
+                                        2 => 20.0,
+                                        3 => 18.0,
+                                        4 => 16.0,
+                                        _ => 14.0,
+                                    };
+                                    ui.label(egui::RichText::new(text.as_ref()).size(size).strong());
+                                } else if in_code_block {
+                                    ui.monospace(text.as_ref());
+                                } else {
+                                    ui.label(text.as_ref());
+                                }
+                            }
+                            MarkdownEvent::Code(code) => {
+                                ui.monospace(egui::RichText::new(code.as_ref()).background_color(egui::Color32::from_gray(50)));
+                            }
+                            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {
+                                ui.label("");
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                ui.colored_label(egui::Color32::RED, format!("Read error: {}", e));
+            }
+        }
+    }
+
+    fn render_archive_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        let result = if entry.extension == "zip" {
+            fs::File::open(&entry.path).ok().and_then(|file| {
+                ZipArchive::new(file).ok().map(|mut archive| {
+                    let mut items = Vec::new();
+                    for i in 0..archive.len() {
+                        if let Ok(file) = archive.by_index(i) {
+                            items.push((file.name().to_string(), file.size(), file.is_dir()));
+                        }
+                    }
+                    items
+                })
+            })
+        } else if entry.extension == "tar" || entry.extension == "gz" || entry.extension == "tgz" {
+            fs::File::open(&entry.path).ok().and_then(|file| {
+                let reader: Box<dyn std::io::Read> = if entry.extension == "gz" || entry.extension == "tgz" {
+                    Box::new(flate2::read::GzDecoder::new(file))
+                } else {
+                    Box::new(file)
+                };
+
+                Archive::new(reader).entries().ok().map(|entries| {
+                    entries.filter_map(|e| e.ok()).map(|e| {
+                        let size = e.header().size().unwrap_or(0);
+                        let path = e.path().ok().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                        let is_dir = e.header().entry_type().is_dir();
+                        (path, size, is_dir)
+                    }).collect()
+                })
+            })
+        } else {
+            None
+        };
+
+        match result {
+            Some(items) => {
+                ui.label(format!("Archive contains {} items:", items.len()));
+                ui.separator();
+                egui::ScrollArea::vertical().id_salt("preview_archive").show(ui, |ui| {
+                    use egui_extras::{TableBuilder, Column};
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .resizable(false)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .column(Column::auto().at_least(30.0))
+                        .column(Column::remainder())
+                        .column(Column::auto().at_least(80.0))
+                        .body(|body| {
+                            body.rows(20.0, items.len(), |mut row| {
+                                let (name, size, is_dir) = &items[row.index()];
+                                row.col(|ui| {
+                                    let icon = if *is_dir { "\u{f07c}" } else { "\u{f15b}" };
+                                    ui.label(icon);
+                                });
+                                row.col(|ui| {
+                                    ui.label(name);
+                                });
+                                row.col(|ui| {
+                                    if !*is_dir {
+                                        ui.label(bytesize::ByteSize(*size).to_string());
+                                    }
+                                });
+                            });
+                        });
+                });
+            }
+            None => {
+                ui.colored_label(egui::Color32::RED, "Failed to read archive");
+            }
+        }
+    }
+
+    fn render_audio_metadata(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        if entry.extension == "mp3" {
+            match id3::Tag::read_from_path(&entry.path) {
+                Ok(tag) => {
+                    ui.heading("Audio Metadata");
+                    ui.separator();
+
+                    if let Some(title) = tag.title() {
+                        ui.label(format!("Title: {}", title));
+                    }
+                    if let Some(artist) = tag.artist() {
+                        ui.label(format!("Artist: {}", artist));
+                    }
+                    if let Some(album) = tag.album() {
+                        ui.label(format!("Album: {}", album));
+                    }
+                    if let Some(year) = tag.year() {
+                        ui.label(format!("Year: {}", year));
+                    }
+                    if let Some(genre) = tag.genre() {
+                        ui.label(format!("Genre: {}", genre));
+                    }
+
+                    ui.add_space(10.0);
+
+                    // Show album art if available
+                    if let Some(picture) = tag.pictures().next() {
+                        ui.label(format!("Album art: {} ({})", picture.mime_type, bytesize::ByteSize(picture.data.len() as u64)));
+                        // Could render the image here if we decode it
+                    }
+                }
+                Err(e) => {
+                    ui.colored_label(egui::Color32::YELLOW, format!("No ID3 tags: {}", e));
+                }
+            }
+        } else {
+            ui.label("Audio metadata preview only available for MP3 files");
+        }
+    }
+
+    fn render_hex_view(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        match fs::File::open(&entry.path) {
+            Ok(mut file) => {
+                let mut buffer = [0u8; 512]; // Read first 512 bytes
+                match file.read(&mut buffer) {
+                    Ok(n) if n > 0 => {
+                        egui::ScrollArea::vertical().id_salt("preview_hex").show(ui, |ui| {
+                            ui.monospace("Offset    00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F  ASCII");
+                            ui.separator();
+
+                            for (i, chunk) in buffer[..n].chunks(16).enumerate() {
+                                let offset = i * 16;
+                                let mut hex_part = String::new();
+                                let mut ascii_part = String::new();
+
+                                for (j, &byte) in chunk.iter().enumerate() {
+                                    hex_part.push_str(&format!("{:02X} ", byte));
+                                    if j == 7 {
+                                        hex_part.push(' ');
+                                    }
+
+                                    if byte >= 32 && byte < 127 {
+                                        ascii_part.push(byte as char);
+                                    } else {
+                                        ascii_part.push('.');
+                                    }
+                                }
+
+                                // Pad hex_part to align ASCII
+                                while hex_part.len() < 50 {
+                                    hex_part.push(' ');
+                                }
+
+                                ui.monospace(format!("{:08X}  {} {}", offset, hex_part, ascii_part));
+                            }
+
+                            if n == 512 {
+                                ui.add_space(5.0);
+                                ui.colored_label(egui::Color32::YELLOW, "--- Preview limited to first 512 bytes ---");
+                            }
+                        });
+                    }
+                    Ok(_) => {
+                        ui.label("Empty file");
+                    }
+                    Err(e) => {
+                        ui.colored_label(egui::Color32::RED, format!("Read error: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                ui.colored_label(egui::Color32::RED, format!("Open error: {}", e));
+            }
+        }
+    }
+
     fn render_preview(&self, ui: &mut egui::Ui, next_navigation: &std::cell::RefCell<Option<PathBuf>>, pending_selection: &std::cell::RefCell<Option<PathBuf>>) {
         let idx = match self.selected_index {
             Some(i) => i, None => { ui.centered_and_justified(|ui| { ui.label("No file selected"); }); return; }
@@ -760,15 +1058,12 @@ impl Heike {
             }
             return;
         }
-        if matches!(entry.extension.as_str(), "pdf") {
-            ui.centered_and_justified(|ui| { ui.label("📕 PDF Preview Not Supported"); }); return;
-        }
-
         if self.last_selection_change.elapsed() <= Duration::from_millis(200) {
-            ui.centered_and_justified(|ui| { ui.spinner(); }); return; 
+            ui.centered_and_justified(|ui| { ui.spinner(); }); return;
         }
 
-        if matches!(entry.extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp") {
+        // Image preview
+        if matches!(entry.extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico") {
             let uri = format!("file://{}", entry.path.display());
             egui::ScrollArea::vertical().id_salt("preview_img").show(ui, |ui| {
                 ui.add(egui::Image::new(uri).max_width(ui.available_width()));
@@ -776,43 +1071,54 @@ impl Heike {
             return;
         }
 
-        match fs::File::open(&entry.path) {
-            Ok(mut file) => {
-                let mut buffer = [0u8; 2048]; 
-                match file.read(&mut buffer) {
-                    Ok(n) if n > 0 => {
-                        match std::str::from_utf8(&buffer[..n]) {
-                            Ok(text) => {
-                                egui::ScrollArea::vertical().id_salt("preview_text").show(ui, |ui| {
-                                    // Poor man's syntax highlighting
-                                    let is_code = matches!(entry.extension.as_str(), "rs" | "py" | "js" | "ts" | "toml" | "json");
-                                    if is_code {
-                                        for line in text.lines() {
-                                            let trimmed = line.trim();
-                                            if trimmed.starts_with("//") || trimmed.starts_with('#') {
-                                                 ui.label(egui::RichText::new(line).color(egui::Color32::DARK_GREEN));
-                                            } else if trimmed.contains("fn ") || trimmed.contains("struct ") || trimmed.contains("def ") || trimmed.contains("class ") {
-                                                 ui.label(egui::RichText::new(line).color(egui::Color32::LIGHT_BLUE));
-                                            } else {
-                                                 ui.monospace(line);
-                                            }
-                                        }
-                                    } else {
-                                        ui.monospace(text);
-                                    }
-                                    
-                                    if n == 2048 { ui.colored_label(egui::Color32::YELLOW, "\n--- Preview Truncated ---"); }
-                                });
-                            }
-                            Err(_) => { ui.centered_and_justified(|ui| { ui.label("binary content"); }); }
-                        }
-                    }
-                    Ok(_) => { ui.label("Empty File"); }
-                    Err(e) => { ui.colored_label(egui::Color32::RED, format!("Read error: {}", e)); }
+        // Markdown preview
+        if matches!(entry.extension.as_str(), "md" | "markdown") {
+            self.render_markdown_preview(ui, entry);
+            return;
+        }
+
+        // Archive preview
+        if matches!(entry.extension.as_str(), "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz") {
+            self.render_archive_preview(ui, entry);
+            return;
+        }
+
+        // Audio metadata preview
+        if matches!(entry.extension.as_str(), "mp3" | "flac" | "ogg" | "m4a" | "wav") {
+            self.render_audio_metadata(ui, entry);
+            return;
+        }
+
+        // PDF placeholder
+        if matches!(entry.extension.as_str(), "pdf") {
+            ui.centered_and_justified(|ui| { ui.label("📕 PDF Preview Not Supported Yet"); });
+            return;
+        }
+
+        // Code/text files with syntax highlighting
+        let text_extensions = [
+            "rs", "py", "js", "ts", "jsx", "tsx", "c", "cpp", "h", "hpp", "java", "go", "rb", "php",
+            "swift", "kt", "scala", "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+            "html", "css", "scss", "sass", "less", "xml", "yaml", "yml", "toml", "json", "ini", "cfg",
+            "txt", "log", "conf", "config", "env", "gitignore", "dockerignore", "editorconfig",
+            "sql", "r", "lua", "vim", "el", "clj", "ex", "exs", "erl", "hrl", "hs", "ml", "fs",
+        ];
+
+        if text_extensions.contains(&entry.extension.as_str()) || entry.extension.is_empty() {
+            // Try to read as text
+            match fs::read_to_string(&entry.path) {
+                Ok(_) => {
+                    self.render_syntax_highlighted(ui, entry);
+                    return;
+                }
+                Err(_) => {
+                    // Fall through to hex view
                 }
             }
-            Err(e) => { ui.colored_label(egui::Color32::RED, format!("Open error: {}", e)); }
         }
+
+        // Binary/hex view for everything else
+        self.render_hex_view(ui, entry);
     }
 }
 
