@@ -5,9 +5,19 @@
 
 ## **Project Status: Active Prototype**
 
-**Current Version:** 0.6.0 (The "Manager" Update)
+**Current Version:** 0.7.0 (The "Search" Update)
 
-### **Recent Updates** (2025-11-22)
+### **Recent Updates** (2025-11-23)
+
+#### **Content Search Integration**
+* ✅ **Ripgrep-all Style Search:** Added full content search with Shift+S keybinding
+* ✅ **Multi-Format Support:** Search in text files, PDFs, and ZIP archives
+* ✅ **Advanced Options:** Case sensitivity, regex support, hidden files, configurable limits
+* ✅ **Smart File Walking:** Gitignore-aware with the `ignore` crate
+* ✅ **Results Navigation:** Navigate matches with n/N, preview in dedicated pane
+* ✅ **Efficient Search:** Powered by grep-searcher for high performance
+
+### **Previous Updates** (2025-11-22)
 
 #### **Layout & Interaction Improvements**
 * ✅ **Fixed Column Widths:** Set reasonable defaults and disabled auto-resize based on content for more stable layout
@@ -73,6 +83,12 @@
 * **Feedback System:** Info and error message toasts in bottom bar
 
 ### **Search & Filtering**
+* **Content Search (NEW):** Press `Shift+S` to search file contents recursively
+  * Full ripgrep-like functionality with regex support
+  * Search in PDFs, ZIP archives, and text files
+  * Gitignore-aware file walking
+  * Navigate results with `n`/`N` (next/previous match)
+  * Press `Enter` to open file at match location
 * **Fuzzy Filter:** Press `/` to filter current view instantly
 * **Enter to Finalize:** Search finalizes on Enter, allowing navigation in filtered results
 * **Hidden Files Toggle:** `.` key or checkbox to show/hide hidden files
@@ -161,7 +177,7 @@
 * [ ] Multiple workspace tabs
 * [ ] Split panes for side-by-side file management
 * [ ] Bulk rename operations
-* [ ] File search across directories
+* [x] File search across directories (content search with Shift+S)
 * [ ] Plugin system (Lua or Wasm)
 * [ ] Embedded terminal pane
 * [ ] Git integration indicators
