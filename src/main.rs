@@ -18,6 +18,8 @@ use zip::ZipArchive;
 use tar::Archive;
 use id3::TagLike;
 use lopdf::Document as PdfDocument;
+use calamine::{Reader, open_workbook, Xlsx, Xls};
+use docx_rs::read_docx;
 use grep_searcher::{Searcher, Sink, SinkMatch};
 use grep_regex::RegexMatcherBuilder;
 use grep_matcher::Matcher;
@@ -336,6 +338,121 @@ fn search_zip_archive(
     results
 }
 
+fn search_docx_content(
+    path: &Path,
+    query: &str,
+    case_sensitive: bool,
+) -> Vec<SearchResult> {
+    let mut results = Vec::new();
+
+    if let Ok(data) = fs::read(path) {
+        if let Ok(docx) = read_docx(&data) {
+            // Extract text from paragraphs
+            let mut all_text = String::new();
+            for child in docx.document.children {
+                if let docx_rs::DocumentChild::Paragraph(para) = child {
+                    for child in para.children {
+                        if let docx_rs::ParagraphChild::Run(run) = child {
+                            for child in run.children {
+                                if let docx_rs::RunChild::Text(text) = child {
+                                    all_text.push_str(&text.text);
+                                }
+                            }
+                        }
+                    }
+                    all_text.push('\n');
+                }
+            }
+
+            // Search through extracted text
+            let search_query = if case_sensitive { query.to_string() } else { query.to_lowercase() };
+
+            for (line_num, line) in all_text.lines().enumerate() {
+                let check_line = if case_sensitive { line.to_string() } else { line.to_lowercase() };
+                if check_line.contains(&search_query) {
+                    if let Some(pos) = check_line.find(&search_query) {
+                        results.push(SearchResult {
+                            file_path: path.to_path_buf(),
+                            file_name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                            line_number: line_num + 1,
+                            line_content: line.trim().to_string(),
+                            match_start: pos,
+                            match_end: pos + search_query.len(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    results
+}
+
+fn search_xlsx_content(
+    path: &Path,
+    query: &str,
+    case_sensitive: bool,
+) -> Vec<SearchResult> {
+    let mut results = Vec::new();
+
+    // Helper macro to search a workbook
+    macro_rules! search_workbook {
+        ($workbook:expr) => {{
+            let sheet_names = $workbook.sheet_names().to_vec();
+            let search_query = if case_sensitive { query.to_string() } else { query.to_lowercase() };
+
+            for sheet_name in sheet_names {
+                if let Ok(range) = $workbook.worksheet_range(&sheet_name) {
+                    let (rows, cols) = range.get_size();
+                    for row in 0..rows {
+                        for col in 0..cols {
+                            if let Some(cell) = range.get((row, col)) {
+                                let cell_text = cell.to_string();
+                                let check_text = if case_sensitive { cell_text.clone() } else { cell_text.to_lowercase() };
+
+                                if check_text.contains(&search_query) {
+                                    if let Some(pos) = check_text.find(&search_query) {
+                                        let col_letter = if col < 26 {
+                                            format!("{}", (b'A' + col as u8) as char)
+                                        } else {
+                                            format!("{}{}",
+                                                (b'A' + (col / 26 - 1) as u8) as char,
+                                                (b'A' + (col % 26) as u8) as char)
+                                        };
+
+                                        results.push(SearchResult {
+                                            file_path: path.to_path_buf(),
+                                            file_name: format!("{} -> {} [{}{}]",
+                                                path.file_name().unwrap_or_default().to_string_lossy(),
+                                                sheet_name,
+                                                col_letter,
+                                                row + 1
+                                            ),
+                                            line_number: row + 1,
+                                            line_content: cell_text.trim().to_string(),
+                                            match_start: pos,
+                                            match_end: pos + search_query.len(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }};
+    }
+
+    // Try XLSX first, then fall back to XLS
+    if let Ok(mut workbook) = open_workbook::<Xlsx<_>, _>(path) {
+        search_workbook!(workbook);
+    } else if let Ok(mut workbook) = open_workbook::<Xls<_>, _>(path) {
+        search_workbook!(workbook);
+    }
+
+    results
+}
+
 fn perform_search(
     query: &str,
     root: &Path,
@@ -380,6 +497,12 @@ fn perform_search(
             }
             "zip" if options.search_archives => {
                 search_zip_archive(path, query, options.case_sensitive)
+            }
+            "docx" | "doc" => {
+                search_docx_content(path, query, options.case_sensitive)
+            }
+            "xlsx" | "xls" => {
+                search_xlsx_content(path, query, options.case_sensitive)
             }
             // Text files and source code
             _ => {
@@ -1339,6 +1462,160 @@ impl Heike {
         }
     }
 
+    fn render_docx_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new("📄 Word Document").size(18.0));
+            ui.add_space(10.0);
+        });
+
+        match fs::read(&entry.path) {
+            Ok(data) => {
+                match read_docx(&data) {
+                    Ok(docx) => {
+                        // Extract text from paragraphs
+                        let mut text_content = String::new();
+                        for child in docx.document.children {
+                            if let docx_rs::DocumentChild::Paragraph(para) = child {
+                                for child in para.children {
+                                    if let docx_rs::ParagraphChild::Run(run) = child {
+                                        for child in run.children {
+                                            if let docx_rs::RunChild::Text(text) = child {
+                                                text_content.push_str(&text.text);
+                                            }
+                                        }
+                                    }
+                                }
+                                text_content.push('\n');
+                            }
+                        }
+
+                        if text_content.trim().is_empty() {
+                            ui.centered_and_justified(|ui| {
+                                ui.label(egui::RichText::new("Document appears to be empty").italics().weak());
+                            });
+                        } else {
+                            egui::ScrollArea::vertical().id_salt("docx_preview").show(ui, |ui| {
+                                ui.add_space(5.0);
+                                ui.label(egui::RichText::new(&text_content).monospace());
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        ui.centered_and_justified(|ui| {
+                            ui.colored_label(egui::Color32::RED, format!("Failed to parse DOCX: {}", e));
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                ui.centered_and_justified(|ui| {
+                    ui.colored_label(egui::Color32::RED, format!("Failed to read file: {}", e));
+                });
+            }
+        }
+    }
+
+    fn render_xlsx_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new("📊 Excel Spreadsheet").size(18.0));
+            ui.add_space(10.0);
+        });
+
+        // Helper macro to reduce code duplication
+        macro_rules! render_workbook {
+            ($workbook:expr) => {{
+                let sheet_names = $workbook.sheet_names().to_vec();
+
+                if sheet_names.is_empty() {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(egui::RichText::new("No sheets found in workbook").italics().weak());
+                    });
+                    return;
+                }
+
+                ui.vertical_centered(|ui| {
+                    ui.label(format!("Sheets: {}", sheet_names.len()));
+                    ui.add_space(5.0);
+                });
+
+                egui::ScrollArea::vertical().id_salt("xlsx_preview").show(ui, |ui| {
+                    for sheet_name in sheet_names.iter().take(3) {  // Preview first 3 sheets
+                        if let Ok(range) = $workbook.worksheet_range(sheet_name) {
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new(format!("Sheet: {}", sheet_name)).strong());
+                            ui.add_space(5.0);
+
+                            // Show dimensions
+                            let (rows, cols) = range.get_size();
+                            ui.label(format!("Dimensions: {} rows × {} columns", rows, cols));
+                            ui.add_space(5.0);
+
+                            // Preview first few rows in a table
+                            let preview_rows = rows.min(10);
+                            let preview_cols = cols.min(6);
+
+                            use egui_extras::{TableBuilder, Column};
+                            TableBuilder::new(ui)
+                                .striped(true)
+                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                .columns(Column::auto().at_least(80.0), preview_cols)
+                                .header(20.0, |mut header| {
+                                    for col in 0..preview_cols {
+                                        header.col(|ui| {
+                                            ui.strong(format!("{}", (b'A' + col as u8) as char));
+                                        });
+                                    }
+                                })
+                                .body(|mut body| {
+                                    for row in 0..preview_rows {
+                                        body.row(18.0, |mut row_ui| {
+                                            for col in 0..preview_cols {
+                                                row_ui.col(|ui| {
+                                                    if let Some(cell) = range.get((row, col)) {
+                                                        ui.label(cell.to_string());
+                                                    } else {
+                                                        ui.label("");
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    }
+                                });
+
+                            if rows > preview_rows || cols > preview_cols {
+                                ui.add_space(5.0);
+                                ui.label(egui::RichText::new(
+                                    format!("Showing {}/{} rows, {}/{} columns",
+                                        preview_rows, rows, preview_cols, cols)
+                                ).italics().weak());
+                            }
+                        }
+                    }
+
+                    if sheet_names.len() > 3 {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new(
+                            format!("... and {} more sheets", sheet_names.len() - 3)
+                        ).italics().weak());
+                    }
+                });
+            }};
+        }
+
+        // Try XLSX first
+        if let Ok(mut workbook) = open_workbook::<Xlsx<_>, _>(&entry.path) {
+            render_workbook!(workbook);
+        } else if let Ok(mut workbook) = open_workbook::<Xls<_>, _>(&entry.path) {
+            render_workbook!(workbook);
+        } else {
+            ui.centered_and_justified(|ui| {
+                ui.colored_label(egui::Color32::RED, "Failed to open spreadsheet file");
+            });
+        }
+    }
+
     fn render_pdf_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
         ui.vertical_centered(|ui| {
             ui.add_space(20.0);
@@ -1487,6 +1764,18 @@ impl Heike {
         // PDF preview
         if matches!(entry.extension.as_str(), "pdf") {
             self.render_pdf_preview(ui, entry);
+            return;
+        }
+
+        // Word document preview
+        if matches!(entry.extension.as_str(), "docx" | "doc") {
+            self.render_docx_preview(ui, entry);
+            return;
+        }
+
+        // Excel spreadsheet preview
+        if matches!(entry.extension.as_str(), "xlsx" | "xls") {
+            self.render_xlsx_preview(ui, entry);
             return;
         }
 
