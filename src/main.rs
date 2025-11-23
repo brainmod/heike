@@ -18,6 +18,10 @@ use zip::ZipArchive;
 use tar::Archive;
 use id3::TagLike;
 use lopdf::Document as PdfDocument;
+use grep_searcher::{Searcher, Sink, SinkMatch};
+use grep_regex::RegexMatcherBuilder;
+use grep_matcher::Matcher;
+use ignore::WalkBuilder;
 
 // --- Data Structures ---
 
@@ -81,17 +85,58 @@ impl FileEntry {
     }
 }
 
+// --- Search Data Structures ---
+
+#[derive(Clone, Debug, PartialEq)]
+struct SearchResult {
+    file_path: PathBuf,
+    file_name: String,
+    line_number: usize,
+    line_content: String,
+    match_start: usize,
+    match_end: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SearchOptions {
+    case_sensitive: bool,
+    use_regex: bool,
+    search_hidden: bool,
+    search_pdfs: bool,
+    search_archives: bool,
+    max_results: usize,
+}
+
+impl Default for SearchOptions {
+    fn default() -> Self {
+        Self {
+            case_sensitive: false,
+            use_regex: false,
+            search_hidden: false,
+            search_pdfs: true,
+            search_archives: true,
+            max_results: 1000,
+        }
+    }
+}
+
 // --- Modes ---
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 enum AppMode {
     Normal,
     Visual,
     Filtering,
     Command,
     Help,
-    Rename,        // New
-    DeleteConfirm, // New
+    Rename,
+    DeleteConfirm,
+    SearchInput,
+    SearchResults {
+        query: String,
+        results: Vec<SearchResult>,
+        selected_index: usize,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -99,8 +144,19 @@ enum ClipboardOp { Copy, Cut } // New
 
 // --- Async Architecture ---
 
-enum IoCommand { LoadDirectory(PathBuf, bool), LoadParent(PathBuf, bool) }
-enum IoResult { DirectoryLoaded(Vec<FileEntry>), ParentLoaded(Vec<FileEntry>), Error(String) }
+enum IoCommand {
+    LoadDirectory(PathBuf, bool),
+    LoadParent(PathBuf, bool),
+    SearchContent { query: String, root_path: PathBuf, options: SearchOptions },
+}
+
+enum IoResult {
+    DirectoryLoaded(Vec<FileEntry>),
+    ParentLoaded(Vec<FileEntry>),
+    SearchCompleted(Vec<SearchResult>),
+    SearchProgress(usize),
+    Error(String),
+}
 
 fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<FileEntry>, std::io::Error> {
     let mut entries = Vec::new();
@@ -133,6 +189,217 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
     false
 }
 
+// --- Search Implementation ---
+
+struct SearchSink {
+    results: Vec<SearchResult>,
+    file_path: PathBuf,
+    file_name: String,
+    max_results: usize,
+}
+
+impl Sink for SearchSink {
+    type Error = std::io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch) -> Result<bool, Self::Error> {
+        if self.results.len() >= self.max_results {
+            return Ok(false); // Stop searching
+        }
+
+        let line_number = mat.line_number().unwrap_or(0) as usize;
+        let line_content = String::from_utf8_lossy(mat.bytes()).to_string();
+
+        // Find match position in the line
+        let (match_start, match_end) = if mat.bytes().iter().position(|_| true).is_some() {
+            (0, line_content.len().min(100)) // Simplified for now
+        } else {
+            (0, 0)
+        };
+
+        self.results.push(SearchResult {
+            file_path: self.file_path.clone(),
+            file_name: self.file_name.clone(),
+            line_number,
+            line_content: line_content.trim_end().to_string(),
+            match_start,
+            match_end,
+        });
+
+        Ok(true)
+    }
+}
+
+fn search_text_file(
+    path: &Path,
+    matcher: &impl Matcher,
+    max_results: usize,
+) -> Result<Vec<SearchResult>, Box<dyn std::error::Error>> {
+    let mut sink = SearchSink {
+        results: Vec::new(),
+        file_path: path.to_path_buf(),
+        file_name: path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        max_results,
+    };
+
+    let mut searcher = Searcher::new();
+    searcher.search_path(matcher, path, &mut sink)?;
+
+    Ok(sink.results)
+}
+
+fn search_pdf_content(
+    path: &Path,
+    query: &str,
+    case_sensitive: bool,
+) -> Vec<SearchResult> {
+    let mut results = Vec::new();
+
+    if let Ok(doc) = PdfDocument::load(path) {
+        let mut all_text = String::new();
+
+        // Extract text from all pages
+        let pages = doc.get_pages();
+        let page_numbers: Vec<u32> = pages.keys().cloned().collect();
+        if let Ok(text) = doc.extract_text(&page_numbers) {
+            all_text.push_str(&text);
+        }
+
+        // Search through extracted text
+        let search_query = if case_sensitive { query.to_string() } else { query.to_lowercase() };
+
+        for (line_num, line) in all_text.lines().enumerate() {
+            let check_line = if case_sensitive { line.to_string() } else { line.to_lowercase() };
+            if check_line.contains(&search_query) {
+                if let Some(pos) = check_line.find(&search_query) {
+                    results.push(SearchResult {
+                        file_path: path.to_path_buf(),
+                        file_name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                        line_number: line_num + 1,
+                        line_content: line.trim().to_string(),
+                        match_start: pos,
+                        match_end: pos + search_query.len(),
+                    });
+                }
+            }
+        }
+    }
+
+    results
+}
+
+fn search_zip_archive(
+    path: &Path,
+    query: &str,
+    case_sensitive: bool,
+) -> Vec<SearchResult> {
+    let mut results = Vec::new();
+
+    if let Ok(file) = fs::File::open(path) {
+        if let Ok(mut archive) = ZipArchive::new(file) {
+            for i in 0..archive.len() {
+                if let Ok(mut file) = archive.by_index(i) {
+                    let file_name = file.name().to_string();
+
+                    if file.is_file() && !file.name().ends_with('/') {
+                        let mut contents = String::new();
+                        if std::io::Read::read_to_string(&mut file, &mut contents).is_ok() {
+                            let search_query = if case_sensitive { query.to_string() } else { query.to_lowercase() };
+
+                            for (line_num, line) in contents.lines().enumerate() {
+                                let check_line = if case_sensitive { line.to_string() } else { line.to_lowercase() };
+                                if check_line.contains(&search_query) {
+                                    if let Some(pos) = check_line.find(&search_query) {
+                                        results.push(SearchResult {
+                                            file_path: path.to_path_buf(),
+                                            file_name: format!("{} -> {}",
+                                                path.file_name().unwrap_or_default().to_string_lossy(),
+                                                file_name
+                                            ),
+                                            line_number: line_num + 1,
+                                            line_content: line.trim().to_string(),
+                                            match_start: pos,
+                                            match_end: pos + search_query.len(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    results
+}
+
+fn perform_search(
+    query: &str,
+    root: &Path,
+    options: &SearchOptions,
+    progress_tx: &Sender<IoResult>,
+) -> Result<Vec<SearchResult>, Box<dyn std::error::Error>> {
+    let mut all_results = Vec::new();
+    let mut file_count = 0;
+
+    // Build regex matcher
+    let matcher = RegexMatcherBuilder::new()
+        .case_insensitive(!options.case_sensitive)
+        .build(query)?;
+
+    // Build file walker with gitignore support
+    let walker = WalkBuilder::new(root)
+        .hidden(!options.search_hidden)
+        .build();
+
+    for entry in walker {
+        let entry = entry?;
+        let path = entry.path();
+
+        if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+            continue;
+        }
+
+        file_count += 1;
+        if file_count % 10 == 0 {
+            let _ = progress_tx.send(IoResult::SearchProgress(file_count));
+        }
+
+        // Determine file type and search accordingly
+        let extension = path.extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let mut file_results = match extension.as_str() {
+            "pdf" if options.search_pdfs => {
+                search_pdf_content(path, query, options.case_sensitive)
+            }
+            "zip" if options.search_archives => {
+                search_zip_archive(path, query, options.case_sensitive)
+            }
+            // Text files and source code
+            _ => {
+                match search_text_file(path, &matcher, options.max_results - all_results.len()) {
+                    Ok(results) => results,
+                    Err(_) => Vec::new(), // Skip binary files that can't be read as text
+                }
+            }
+        };
+
+        all_results.append(&mut file_results);
+
+        if all_results.len() >= options.max_results {
+            break;
+        }
+    }
+
+    Ok(all_results)
+}
+
 // --- Main App Struct ---
 
 struct Heike {
@@ -159,7 +426,13 @@ struct Heike {
     // Clipboard State (New)
     clipboard: HashSet<PathBuf>,
     clipboard_op: Option<ClipboardOp>,
-    
+
+    // Search State
+    search_query: String,
+    search_options: SearchOptions,
+    search_in_progress: bool,
+    search_file_count: usize,
+
     // UI State
     error_message: Option<String>,
     info_message: Option<String>, // New
@@ -210,6 +483,12 @@ impl Heike {
                             Err(_) => { let _ = res_tx.send(IoResult::ParentLoaded(Vec::new())); }
                         }
                     }
+                    IoCommand::SearchContent { query, root_path, options } => {
+                        match perform_search(&query, &root_path, &options, &res_tx) {
+                            Ok(results) => { let _ = res_tx.send(IoResult::SearchCompleted(results)); }
+                            Err(e) => { let _ = res_tx.send(IoResult::Error(format!("Search error: {}", e))); }
+                        }
+                    }
                 }
                 ctx_clone.request_repaint();
             }
@@ -231,6 +510,10 @@ impl Heike {
             focus_input: false,
             clipboard: HashSet::new(),    // Init
             clipboard_op: None,           // Init
+            search_query: String::new(),
+            search_options: SearchOptions::default(),
+            search_in_progress: false,
+            search_file_count: 0,
             error_message: None,
             info_message: None,           // Init
             show_hidden: false,
@@ -355,8 +638,23 @@ impl Heike {
                     }
                 }
                 IoResult::ParentLoaded(entries) => { self.parent_entries = entries; }
+                IoResult::SearchCompleted(results) => {
+                    self.search_in_progress = false;
+                    let result_count = results.len();
+                    self.mode = AppMode::SearchResults {
+                        query: self.search_query.clone(),
+                        results,
+                        selected_index: 0,
+                    };
+                    self.info_message = Some(format!("Found {} matches in {} files",
+                        result_count, self.search_file_count));
+                }
+                IoResult::SearchProgress(count) => {
+                    self.search_file_count = count;
+                }
                 IoResult::Error(msg) => {
                     self.is_loading = false;
+                    self.search_in_progress = false;
                     self.error_message = Some(msg);
                     self.all_entries.clear();
                     self.visible_entries.clear();
@@ -588,8 +886,8 @@ impl Heike {
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
-        // 1. Modal Inputs (Command, Filter, Rename)
-        if matches!(self.mode, AppMode::Command | AppMode::Filtering | AppMode::Rename) {
+        // 1. Modal Inputs (Command, Filter, Rename, SearchInput)
+        if matches!(self.mode, AppMode::Command | AppMode::Filtering | AppMode::Rename | AppMode::SearchInput) {
             if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
                 match self.mode {
                     AppMode::Rename => self.perform_rename(),
@@ -598,6 +896,19 @@ impl Heike {
                         // Finalize search and allow navigation in filtered results
                         self.mode = AppMode::Normal;
                         // Keep the filtered results
+                    }
+                    AppMode::SearchInput => {
+                        // Start search
+                        if !self.search_query.is_empty() {
+                            self.search_in_progress = true;
+                            self.search_file_count = 0;
+                            let _ = self.command_tx.send(IoCommand::SearchContent {
+                                query: self.search_query.clone(),
+                                root_path: self.current_path.clone(),
+                                options: self.search_options.clone(),
+                            });
+                        }
+                        self.mode = AppMode::Normal;
                     }
                     _ => {}
                 }
@@ -623,6 +934,49 @@ impl Heike {
                  self.mode = AppMode::Normal;
              }
              return;
+        }
+
+        // Handle SearchResults mode navigation
+        if let AppMode::SearchResults { query: _, ref results, ref mut selected_index } = self.mode {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.mode = AppMode::Normal;
+                return;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::N) && !i.modifiers.shift) {
+                if !results.is_empty() {
+                    *selected_index = (*selected_index + 1) % results.len();
+                }
+                return;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::N) && i.modifiers.shift) {
+                if !results.is_empty() {
+                    *selected_index = if *selected_index == 0 { results.len() - 1 } else { *selected_index - 1 };
+                }
+                return;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                // Open the file at the match location
+                if let Some(result) = results.get(*selected_index) {
+                    if result.file_path.is_file() {
+                        let _ = open::that(&result.file_path);
+                    }
+                }
+                return;
+            }
+            // Allow other navigation within search results
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J)) {
+                if !results.is_empty() {
+                    *selected_index = (*selected_index + 1) % results.len();
+                }
+                return;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K)) {
+                if !results.is_empty() {
+                    *selected_index = if *selected_index == 0 { results.len() - 1 } else { *selected_index - 1 };
+                }
+                return;
+            }
+            return; // Don't process other keys in search results mode
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -655,6 +1009,11 @@ impl Heike {
             if let Some(idx) = self.selected_index {
                 if let Some(entry) = self.visible_entries.get(idx) { self.multi_selection.insert(entry.path.clone()); }
             }
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.shift) {
+            self.mode = AppMode::SearchInput;
+            self.focus_input = true;
             return;
         }
 
@@ -1236,7 +1595,7 @@ impl eframe::App for Heike {
                     if ui.button("?").clicked() { self.mode = AppMode::Help; }
 
                     // Mode Indicator
-                    match self.mode {
+                    match &self.mode {
                         AppMode::Normal => { ui.label("NORMAL"); },
                         AppMode::Visual => { ui.colored_label(egui::Color32::LIGHT_BLUE, "VISUAL"); },
                         AppMode::Filtering => { ui.colored_label(egui::Color32::YELLOW, "FILTER"); },
@@ -1244,6 +1603,10 @@ impl eframe::App for Heike {
                         AppMode::Help => { ui.colored_label(egui::Color32::GREEN, "HELP"); },
                         AppMode::Rename => { ui.colored_label(egui::Color32::ORANGE, "RENAME"); },
                         AppMode::DeleteConfirm => { ui.colored_label(egui::Color32::RED, "CONFIRM DELETE?"); },
+                        AppMode::SearchInput => { ui.colored_label(egui::Color32::LIGHT_BLUE, "SEARCH"); },
+                        AppMode::SearchResults { results, .. } => {
+                            ui.colored_label(egui::Color32::LIGHT_BLUE, format!("SEARCH ({} results)", results.len()));
+                        },
                     }
                 });
             });
@@ -1265,7 +1628,99 @@ impl eframe::App for Heike {
             });
         });
 
-        egui::SidePanel::left("parent_panel").resizable(true).default_width(200.0).show(ctx, |ui| {
+        // Search Results View
+        if let AppMode::SearchResults { ref query, ref results, selected_index } = self.mode {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.heading(format!("Search Results: \"{}\"", query));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(format!("{} matches", results.len()));
+                    });
+                });
+                ui.separator();
+                ui.add_space(4.0);
+
+                ui.columns(2, |columns| {
+                    // Left column: Results list
+                    columns[0].vertical(|ui| {
+                        ui.heading("Matches");
+                        ui.separator();
+                        egui::ScrollArea::vertical().id_salt("search_results_scroll").show(ui, |ui| {
+                            use egui_extras::{TableBuilder, Column};
+                            TableBuilder::new(ui).striped(true).resizable(false)
+                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                .column(Column::remainder())
+                                .body(|body| {
+                                    body.rows(40.0, results.len(), |mut row| {
+                                        let row_index = row.index();
+                                        let result = &results[row_index];
+                                        let is_selected = selected_index == row_index;
+
+                                        if is_selected { row.set_selected(true); }
+
+                                        row.col(|ui| {
+                                            ui.vertical(|ui| {
+                                                let file_label = format!("{}:{}", result.file_name, result.line_number);
+                                                let text = if is_selected {
+                                                    egui::RichText::new(&file_label).color(egui::Color32::from_rgb(100, 200, 255))
+                                                } else {
+                                                    egui::RichText::new(&file_label)
+                                                };
+                                                ui.label(text);
+
+                                                // Show line content preview (truncated)
+                                                let preview = if result.line_content.len() > 60 {
+                                                    format!("{}...", &result.line_content[..60])
+                                                } else {
+                                                    result.line_content.clone()
+                                                };
+                                                ui.label(egui::RichText::new(preview).size(10.0).color(egui::Color32::GRAY));
+                                            });
+                                        });
+                                    });
+                                });
+                        });
+                    });
+
+                    // Right column: Preview
+                    columns[1].vertical(|ui| {
+                        ui.heading("Preview");
+                        ui.separator();
+
+                        if let Some(result) = results.get(selected_index) {
+                            ui.label(egui::RichText::new(&result.file_name).strong());
+                            ui.separator();
+
+                            // Show context around the match
+                            egui::ScrollArea::vertical().id_salt("search_preview_scroll").show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("Line {}:", result.line_number));
+                                    ui.label(egui::RichText::new(&result.line_content).code());
+                                });
+
+                                ui.add_space(10.0);
+                                ui.label("Full file path:");
+                                ui.label(egui::RichText::new(result.file_path.display().to_string()).code());
+
+                                ui.add_space(10.0);
+                                ui.horizontal(|ui| {
+                                    ui.label("Press");
+                                    ui.label(egui::RichText::new("Enter").strong());
+                                    ui.label("to open file,");
+                                    ui.label(egui::RichText::new("n/N").strong());
+                                    ui.label("for next/previous,");
+                                    ui.label(egui::RichText::new("Esc").strong());
+                                    ui.label("to return");
+                                });
+                            });
+                        }
+                    });
+                });
+            });
+        } else {
+            // Normal file browser view
+            egui::SidePanel::left("parent_panel").resizable(true).default_width(200.0).show(ctx, |ui| {
             ui.add_space(4.0);
             ui.vertical_centered(|ui| { ui.heading("Parent"); });
             ui.separator();
@@ -1342,6 +1797,7 @@ impl eframe::App for Heike {
                             ui.label("Alt + Arrows"); ui.label("History"); ui.end_row();
                             ui.label("."); ui.label("Toggle Hidden"); ui.end_row();
                             ui.label("/"); ui.label("Filter Mode"); ui.end_row();
+                            ui.label("S (Shift+s)"); ui.label("Content Search"); ui.end_row();
                             ui.label(":"); ui.label("Command Mode"); ui.end_row();
                             ui.label("v"); ui.label("Visual Select Mode"); ui.end_row();
                             ui.label("y / x / p"); ui.label("Copy / Cut / Paste"); ui.end_row();
@@ -1350,6 +1806,58 @@ impl eframe::App for Heike {
                         });
                         ui.add_space(10.0);
                         if ui.button("Close").clicked() { self.mode = AppMode::Normal; }
+                    });
+            }
+
+            // Search Input Modal
+            if self.mode == AppMode::SearchInput {
+                egui::Window::new("Content Search")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.set_min_width(400.0);
+                        ui.label("Search for content in files:");
+                        ui.add_space(5.0);
+
+                        let response = ui.text_edit_singleline(&mut self.search_query);
+                        if self.focus_input {
+                            response.request_focus();
+                            self.focus_input = false;
+                        }
+
+                        ui.add_space(10.0);
+                        ui.label("Options:");
+                        ui.checkbox(&mut self.search_options.case_sensitive, "Case sensitive");
+                        ui.checkbox(&mut self.search_options.use_regex, "Use regex");
+                        ui.checkbox(&mut self.search_options.search_hidden, "Search hidden files");
+                        ui.checkbox(&mut self.search_options.search_pdfs, "Search PDFs");
+                        ui.checkbox(&mut self.search_options.search_archives, "Search archives");
+
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("Search").clicked() && !self.search_query.is_empty() {
+                                self.search_in_progress = true;
+                                self.search_file_count = 0;
+                                let _ = self.command_tx.send(IoCommand::SearchContent {
+                                    query: self.search_query.clone(),
+                                    root_path: self.current_path.clone(),
+                                    options: self.search_options.clone(),
+                                });
+                                self.mode = AppMode::Normal;
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.mode = AppMode::Normal;
+                            }
+                        });
+
+                        if self.search_in_progress {
+                            ui.add_space(10.0);
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(format!("Searching... ({} files)", self.search_file_count));
+                            });
+                        }
                     });
             }
 
@@ -1512,6 +2020,7 @@ impl eframe::App for Heike {
                     });
             });
         });
+        } // End of else block for normal file browser view
 
         if let Some(idx) = next_selection.into_inner() { self.selected_index = Some(idx); }
         if let Some(pending) = pending_selection.into_inner() { self.pending_selection_path = Some(pending); }

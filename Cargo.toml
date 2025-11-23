@@ -1,6 +1,6 @@
 [package]
 name = "heike"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 
 [dependencies]
@@ -22,3 +22,8 @@ tar = "0.4"      # For TAR archive preview
 flate2 = "1.0"   # For gzip decompression
 id3 = "1.14"     # For audio metadata
 lopdf = "0.34"   # For PDF metadata reading
+grep-searcher = "0.1" # For efficient text searching
+grep-regex = "0.1"   # For regex matching in search
+grep-matcher = "0.1" # For grep matching interface
+ignore = "0.4"   # For gitignore-aware file walking
+rayon = "1.10"   # For parallel search operations
