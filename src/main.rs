@@ -2320,7 +2320,7 @@ impl eframe::App for Heike {
 
 fn main() -> eframe::Result<()> {
     // Load the app icon
-    let icon_bytes = include_bytes!("../heike_icon.png");
+    let icon_bytes = include_bytes!("../assets/heike_icon.png");
     let icon_image = image::load_from_memory(icon_bytes)
         .expect("Failed to load icon")
         .to_rgba8();
@@ -2348,7 +2348,7 @@ fn main() -> eframe::Result<()> {
             let mut fonts = egui::FontDefinitions::default();
 
             // Use bundled JetBrainsMono Nerd Font
-            let nerd_font_data = include_bytes!("../JetBrainsMonoNerdFont-Regular.ttf");
+            let nerd_font_data = include_bytes!("../assets/JetBrainsMonoNerdFont-Regular.ttf");
             fonts.font_data.insert(
                 "nerd_font".to_owned(),
                 egui::FontData::from_static(nerd_font_data).into()
