@@ -1,9 +1,40 @@
 # **Heike**
 
 **Origin:** Named after the *Heikegani* (平家蟹), a species of crab native to Japan with a shell that bears the pattern of a human face, often said to resemble the face of an angry samurai.
-**Philosophy:** Heike is a GUI spiritual successor to the terminal file manager **Yazi**. It marries the speed and keyboard-centric efficiency of a TUI with the rich media capabilities and distinct visual layout of a modern GUI (using egui).
+**Philosophy:** Heike is a GUI spiritual successor to the terminal file manager **Yazi**. It marries the speed and keyboard-centric efficiency of a TUI with the rich media capabilities and distinct visual layout of a modern GUI.
 
-## **Project Status: Active Prototype**
+## **Project Status: Major Architecture Migration**
+
+**Current Version:** 0.8.0-alpha (egui → iced Migration)
+
+### **🚧 ICED MIGRATION IN PROGRESS 🚧**
+
+Heike is undergoing a major architectural transition from egui (immediate mode) to iced (Elm architecture). This migration brings:
+
+- **Better architecture:** Clean separation between Model, View, and Update logic
+- **Improved async handling:** Native Task-based async operations for file I/O
+- **Modern subscriptions:** Event-driven keyboard handling and file watching
+- **Scalability:** Easier to add complex features like tabs, split panes, and plugins
+
+**Migration Progress:**
+- ✅ **Core Architecture:** Modular file structure with separated concerns
+- ✅ **Dependencies:** iced 0.13, tokio for async runtime
+- ✅ **Data Models:** FileEntry, Mode, Clipboard ported to new structure
+- ✅ **Message System:** Complete Message enum for Elm architecture
+- ✅ **Async I/O:** Task-based directory loading and file operations
+- ✅ **Keyboard Handling:** Event subscription with vim keybindings
+- ✅ **File Watcher:** Subscription-based automatic directory refresh
+- ✅ **Build System:** Successfully compiles with iced
+- ⏳ **Miller Columns View:** Pending - will use pane_grid widget
+- ⏳ **Preview System:** Pending - port image, syntax, markdown, PDF, archive viewers
+- ⏳ **Search Integration:** Pending - async content search with progress
+- ⏳ **Visual Polish:** Pending - themes, icons, modals
+
+The egui version is preserved in `src/main.rs.egui.backup` for reference.
+
+---
+
+## **Previous Version: 0.7.0 (egui-based)**
 
 **Current Version:** 0.7.0 (The "Search" Update)
 
