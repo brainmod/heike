@@ -4,7 +4,7 @@ use crate::model::{Clipboard, ClipboardOp, ConfirmAction, FileEntry, Mode, Searc
 use crate::style::AppTheme;
 use crate::subscription::{file_watcher, handle_key, keyboard_subscription};
 use iced::keyboard;
-use iced::widget::{column, container, pane_grid, row, scrollable, stack, text, text_input, Column};
+use iced::widget::{button, column, container, mouse_area, pane_grid, row, scrollable, stack, text, text_input, Column};
 use iced::{Element, Length, Size, Subscription, Task, Theme};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -19,6 +19,7 @@ pub struct Heike {
     // Entries
     pub entries: Vec<FileEntry>,
     pub parent_entries: Vec<FileEntry>,
+    pub preview_entries: Vec<FileEntry>,
     pub selected: Option<usize>,
     pub multi_select: HashSet<PathBuf>,
 
@@ -56,6 +57,7 @@ impl Default for Heike {
             history_idx: 0,
             entries: Vec::new(),
             parent_entries: Vec::new(),
+            preview_entries: Vec::new(),
             selected: Some(0),
             multi_select: HashSet::new(),
             mode: Mode::default(),
@@ -123,6 +125,8 @@ impl Heike {
             Message::ToggleMultiSelect => self.toggle_multi_select(),
             Message::ClearMultiSelect => self.clear_multi_select(),
             Message::DirectoryLoaded(result) => self.directory_loaded(result),
+            Message::ParentDirectoryLoaded(result) => self.parent_directory_loaded(result),
+            Message::PreviewDirectoryLoaded(result) => self.preview_directory_loaded(result),
             Message::FileOperationComplete(result) => self.file_operation_complete(result),
             Message::ToggleHidden => self.toggle_hidden(),
             Message::ToggleTheme => self.toggle_theme(),
@@ -196,6 +200,20 @@ impl Heike {
     fn select(&mut self, index: usize) -> Task<Message> {
         if index < self.entries.len() {
             self.selected = Some(index);
+
+            // Load preview if it's a directory
+            if let Some(entry) = self.entries.get(index) {
+                if entry.is_dir {
+                    let path = entry.path.clone();
+                    let show_hidden = self.show_hidden;
+                    return Task::perform(
+                        io::load_directory(path, show_hidden),
+                        Message::PreviewDirectoryLoaded,
+                    );
+                } else {
+                    self.preview_entries.clear();
+                }
+            }
         }
         Task::none()
     }
@@ -447,22 +465,55 @@ impl Heike {
             Ok(entries) => {
                 self.entries = entries;
 
+                // Load parent and preview directories
+                let mut tasks = vec![];
+
                 // Load parent directory entries
                 if let Some(parent) = self.current_path.parent() {
                     let parent_path = parent.to_path_buf();
                     let show_hidden = self.show_hidden;
-
-                    // Also spawn task to load parent entries
-                    return Task::perform(
+                    tasks.push(Task::perform(
                         io::load_directory(parent_path, show_hidden),
-                        |_| Message::ShowInfo("".to_string()), // Ignore result for now
-                    );
+                        Message::ParentDirectoryLoaded,
+                    ));
                 }
 
-                Task::none()
+                // Load preview for selected entry if it's a directory
+                if let Some(idx) = self.selected {
+                    if let Some(entry) = self.entries.get(idx) {
+                        if entry.is_dir {
+                            let path = entry.path.clone();
+                            let show_hidden = self.show_hidden;
+                            tasks.push(Task::perform(
+                                io::load_directory(path, show_hidden),
+                                Message::PreviewDirectoryLoaded,
+                            ));
+                        }
+                    }
+                }
+
+                if tasks.is_empty() {
+                    Task::none()
+                } else {
+                    Task::batch(tasks)
+                }
             }
             Err(err) => self.show_error(err),
         }
+    }
+
+    fn parent_directory_loaded(&mut self, result: Result<Vec<FileEntry>, String>) -> Task<Message> {
+        if let Ok(entries) = result {
+            self.parent_entries = entries;
+        }
+        Task::none()
+    }
+
+    fn preview_directory_loaded(&mut self, result: Result<Vec<FileEntry>, String>) -> Task<Message> {
+        if let Ok(entries) = result {
+            self.preview_entries = entries;
+        }
+        Task::none()
     }
 
     fn file_operation_complete(&mut self, result: Result<String, String>) -> Task<Message> {
@@ -774,7 +825,7 @@ impl Heike {
                         .spacing(8)
                         .padding(4);
 
-                    container(row_content)
+                    let styled_container = container(row_content)
                         .width(Length::Fill)
                         .style(move |theme: &Theme| {
                             let palette = theme.extended_palette();
@@ -793,7 +844,10 @@ impl Heike {
                                 },
                                 ..Default::default()
                             }
-                        })
+                        });
+
+                    mouse_area(styled_container)
+                        .on_press(Message::Select(idx))
                         .into()
                 })
                 .collect();
@@ -821,21 +875,37 @@ impl Heike {
         let content = if let Some(idx) = self.selected {
             if let Some(entry) = self.entries.get(idx) {
                 if entry.is_dir {
-                    text(format!("Directory: {}", entry.name)).size(14)
+                    // Show directory contents
+                    if self.preview_entries.is_empty() {
+                        column![text("Empty directory").size(14)]
+                    } else {
+                        let items: Vec<Element<Message>> = self
+                            .preview_entries
+                            .iter()
+                            .map(|entry| {
+                                let icon = text(entry.get_icon()).size(14);
+                                let name = text(&entry.name).size(14);
+                                row![icon, name].spacing(8).into()
+                            })
+                            .collect();
+                        column(items).spacing(2)
+                    }
                 } else {
-                    text(format!(
-                        "{}\nSize: {}\nType: {}",
+                    // Show file info
+                    column![text(format!(
+                        "{}\n\nSize: {}\nType: {}\nModified: {:?}",
                         entry.name,
                         bytesize::ByteSize::b(entry.size),
-                        entry.extension
+                        entry.extension,
+                        entry.modified
                     ))
-                    .size(14)
+                    .size(14)]
                 }
             } else {
-                text("No selection").size(14)
+                column![text("No selection").size(14)]
             }
         } else {
-            text("No selection").size(14)
+            column![text("No selection").size(14)]
         };
 
         container(scrollable(content))

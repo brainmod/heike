@@ -39,6 +39,8 @@ pub enum Message {
 
     // Async results
     DirectoryLoaded(Result<Vec<FileEntry>, String>),
+    ParentDirectoryLoaded(Result<Vec<FileEntry>, String>),
+    PreviewDirectoryLoaded(Result<Vec<FileEntry>, String>),
     SearchComplete(Vec<SearchResult>),
     FileWatcherEvent(PathBuf),
     FileOperationComplete(Result<String, String>),
