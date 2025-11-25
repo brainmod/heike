@@ -549,6 +549,19 @@ impl Heike {
         Task::none()
     }
 
+    fn get_filtered_entries(&self) -> Vec<(usize, &FileEntry)> {
+        if self.mode == Mode::Filter && !self.input_buffer.is_empty() {
+            let filter = self.input_buffer.to_lowercase();
+            self.entries
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.name.to_lowercase().contains(&filter))
+                .collect()
+        } else {
+            self.entries.iter().enumerate().collect()
+        }
+    }
+
     fn open_file(&mut self, path: PathBuf) -> Task<Message> {
         // TODO: Implement file opening in preview
         Task::none()
@@ -798,13 +811,18 @@ impl Heike {
                 .into();
         }
 
-        let entries = if self.entries.is_empty() {
-            column![text("Empty directory").size(14)]
+        let filtered = self.get_filtered_entries();
+
+        let entries = if filtered.is_empty() {
+            column![text(if self.mode == Mode::Filter {
+                "No matches"
+            } else {
+                "Empty directory"
+            })
+            .size(14)]
         } else {
-            let items: Vec<Element<Message>> = self
-                .entries
-                .iter()
-                .enumerate()
+            let items: Vec<Element<Message>> = filtered
+                .into_iter()
                 .map(|(idx, entry)| {
                     let is_selected = self.selected == Some(idx);
                     let is_cut = self.clipboard.is_cut()
@@ -937,6 +955,22 @@ impl Heike {
             Mode::GPrefix => "G",
         };
 
+        let item_text = if self.mode == Mode::Filter && !self.input_buffer.is_empty() {
+            let filtered_count = self.get_filtered_entries().len();
+            format!(
+                "Items: {}/{} | Selected: {}",
+                filtered_count,
+                self.entries.len(),
+                self.selected.map(|i| i + 1).unwrap_or(0)
+            )
+        } else {
+            format!(
+                "Items: {} | Selected: {}",
+                self.entries.len(),
+                self.selected.map(|i| i + 1).unwrap_or(0)
+            )
+        };
+
         let status_content = row![
             text(format!("  {} ", mode_text))
                 .size(14)
@@ -944,12 +978,7 @@ impl Heike {
                     color: Some(theme.extended_palette().primary.strong.color),
                 }),
             text(" | ").size(14),
-            text(format!(
-                "Items: {} | Selected: {}",
-                self.entries.len(),
-                self.selected.map(|i| i + 1).unwrap_or(0)
-            ))
-            .size(14),
+            text(item_text).size(14),
         ]
         .spacing(5);
 
