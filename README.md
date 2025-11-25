@@ -25,10 +25,12 @@ Heike is undergoing a major architectural transition from egui (immediate mode) 
 - ✅ **Keyboard Handling:** Event subscription with vim keybindings
 - ✅ **File Watcher:** Subscription-based automatic directory refresh
 - ✅ **Build System:** Successfully compiles with iced
-- ⏳ **Miller Columns View:** Pending - will use pane_grid widget
+- ✅ **Miller Columns View:** 3-pane layout with breadcrumb and status bar
+- ✅ **File Icons:** Nerd Font glyphs displaying properly
+- ✅ **Selection & Multi-select:** Visual highlighting working
 - ⏳ **Preview System:** Pending - port image, syntax, markdown, PDF, archive viewers
 - ⏳ **Search Integration:** Pending - async content search with progress
-- ⏳ **Visual Polish:** Pending - themes, icons, modals
+- ⏳ **Command/Filter Input:** Pending - text input modals
 
 The egui version is preserved in `src/main.rs.egui.backup` for reference.
 
