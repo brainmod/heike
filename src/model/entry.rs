@@ -8,6 +8,7 @@ pub struct FileEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    #[allow(dead_code)]
     pub modified: SystemTime,
     pub extension: String,
 }

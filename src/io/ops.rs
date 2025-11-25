@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::message::PreviewContent; // Import PreviewContent
 
 pub async fn copy_files(sources: Vec<PathBuf>, dest_dir: PathBuf) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
@@ -84,6 +85,28 @@ pub async fn create_file(path: PathBuf, name: String) -> Result<String, String> 
         let new_file = path.join(&name);
         fs::File::create(&new_file).map_err(|e| format!("Create file failed: {}", e))?;
         Ok(format!("Created file: {}", name))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+pub async fn load_file_content(path: PathBuf) -> Result<PreviewContent, String> {
+    tokio::task::spawn_blocking(move || {
+        let extension = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        match extension.as_str() {
+            // For now, only handle text files
+            "txt" | "md" | "rs" | "toml" | "json" | "yaml" | "yml" | "xml" | "sh" => {
+                fs::read_to_string(&path)
+                    .map(PreviewContent::Text)
+                    .map_err(|e| format!("Error reading file: {}", e))
+            }
+            _ => Ok(PreviewContent::Error(format!("No preview available for .{} files", extension))),
+        }
     })
     .await
     .map_err(|e| e.to_string())?

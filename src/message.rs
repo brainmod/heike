@@ -1,11 +1,10 @@
-use crate::model::{ConfirmAction, FileEntry, Mode, SearchResult};
-use iced::keyboard::{Key, Modifiers};
+use crate::model::{FileEntry, Mode};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub enum Message {
     // Keyboard
-    KeyPressed(Key, Modifiers),
+    KeyPressed(iced::keyboard::Key, iced::keyboard::Modifiers),
 
     // Navigation
     Navigate(PathBuf),
@@ -29,8 +28,11 @@ pub enum Message {
     Paste,
     Delete,
     ConfirmDelete,
+    #[allow(dead_code)]
     Rename(String),
+    #[allow(dead_code)]
     CreateDirectory(String),
+    #[allow(dead_code)]
     CreateFile(String),
 
     // Multi-select
@@ -41,14 +43,17 @@ pub enum Message {
     DirectoryLoaded(Result<Vec<FileEntry>, String>),
     ParentDirectoryLoaded(Result<Vec<FileEntry>, String>),
     PreviewDirectoryLoaded(Result<Vec<FileEntry>, String>),
-    SearchComplete(Vec<SearchResult>),
+    #[allow(dead_code)]
+    SearchComplete(Vec<crate::model::SearchResult>),
     FileWatcherEvent(PathBuf),
     FileOperationComplete(Result<String, String>),
-    PreviewLoaded(PreviewContent),
+    PreviewLoaded(Result<PreviewContent, String>),
 
     // UI
     ToggleHidden,
+    #[allow(dead_code)]
     ToggleTheme,
+    #[allow(dead_code)]
     OpenFile(PathBuf),
     OpenInSystem(PathBuf),
 
@@ -57,18 +62,23 @@ pub enum Message {
     PrevSearchResult,
 
     // Pane interaction
+    #[allow(dead_code)]
     PaneResized(f32),
 
     // Error handling
     ShowError(String),
     ShowInfo(String),
+    FontLoaded(Result<iced::font::Family, iced::font::Error>),
 }
 
 #[derive(Debug, Clone)]
 pub enum PreviewContent {
     Text(String),
+    #[allow(dead_code)]
     Image(PathBuf),
+    #[allow(dead_code)]
     Directory(Vec<FileEntry>),
     Loading,
     Error(String),
 }
+

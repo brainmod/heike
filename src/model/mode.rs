@@ -3,11 +3,13 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Mode {
     Normal,
+    #[allow(dead_code)]
     Visual,
     Filter,
     Command,
     Rename,
     Search,
+    #[allow(dead_code)]
     SearchResults(Vec<SearchResult>),
     Confirm(ConfirmAction),
     GPrefix, // For 'gg' sequence
@@ -32,5 +34,6 @@ pub struct SearchResult {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConfirmAction {
     Delete,
+    #[allow(dead_code)]
     Overwrite,
 }

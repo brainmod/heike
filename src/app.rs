@@ -1,14 +1,14 @@
 use crate::io;
 use crate::message::{Message, PreviewContent};
-use crate::model::{Clipboard, ClipboardOp, ConfirmAction, FileEntry, Mode, SearchResult};
+use crate::model::{Clipboard, ConfirmAction, FileEntry, Mode, SearchResult};
 use crate::style::AppTheme;
 use crate::subscription::{file_watcher, handle_key, keyboard_subscription};
-use iced::keyboard;
-use iced::widget::{button, column, container, mouse_area, pane_grid, row, scrollable, stack, text, text_input, Column};
-use iced::{Element, Length, Size, Subscription, Task, Theme};
-use std::collections::{HashMap, HashSet};
+use iced::widget::{column, container, mouse_area, row, scrollable, text, text_input};
+use iced::{Element, Length, Subscription, Task, Theme};
+use std::collections::HashSet;
 use std::env;
 use std::path::PathBuf;
+use crate::FONT_NAME;
 
 pub struct Heike {
     // Navigation
@@ -26,12 +26,15 @@ pub struct Heike {
     // Mode & Input
     pub mode: Mode,
     pub input_buffer: String,
+    pub input_id: text_input::Id,
 
     // Clipboard
     pub clipboard: Clipboard,
 
     // Search
+    #[allow(dead_code)]
     pub search_results: Vec<SearchResult>,
+    #[allow(dead_code)]
     pub search_index: usize,
 
     // UI State
@@ -62,6 +65,7 @@ impl Default for Heike {
             multi_select: HashSet::new(),
             mode: Mode::default(),
             input_buffer: String::new(),
+            input_id: text_input::Id::unique(),
             clipboard: Clipboard::new(),
             search_results: Vec::new(),
             search_index: 0,
@@ -90,6 +94,7 @@ impl Heike {
         )
     }
 
+    #[allow(dead_code)]
     pub fn title(&self) -> String {
         format!("Heike - {}", self.current_path.display())
     }
@@ -128,6 +133,13 @@ impl Heike {
             Message::ParentDirectoryLoaded(result) => self.parent_directory_loaded(result),
             Message::PreviewDirectoryLoaded(result) => self.preview_directory_loaded(result),
             Message::FileOperationComplete(result) => self.file_operation_complete(result),
+            Message::PreviewLoaded(result) => {
+                self.preview_content = match result {
+                    Ok(content) => content,
+                    Err(e) => PreviewContent::Error(e),
+                };
+                Task::none()
+            }
             Message::ToggleHidden => self.toggle_hidden(),
             Message::ToggleTheme => self.toggle_theme(),
             Message::OpenFile(path) => self.open_file(path),
@@ -135,6 +147,13 @@ impl Heike {
             Message::FileWatcherEvent(path) => self.file_watcher_event(path),
             Message::ShowError(msg) => self.show_error(msg),
             Message::ShowInfo(msg) => self.show_info(msg),
+            Message::FontLoaded(result) => {
+                match result {
+                    Ok(_) => println!("Nerd Font loaded successfully!"),
+                    Err(e) => eprintln!("Error loading Nerd Font: {:?}", e),
+                }
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -200,18 +219,19 @@ impl Heike {
     fn select(&mut self, index: usize) -> Task<Message> {
         if index < self.entries.len() {
             self.selected = Some(index);
+            self.preview_entries.clear(); // Clear old directory preview
+            self.preview_content = PreviewContent::Loading; // Show loading indicator
 
-            // Load preview if it's a directory
             if let Some(entry) = self.entries.get(index) {
+                let path = entry.path.clone();
+
                 if entry.is_dir {
-                    let path = entry.path.clone();
-                    let show_hidden = self.show_hidden;
                     return Task::perform(
-                        io::load_directory(path, show_hidden),
+                        io::load_directory(path, self.show_hidden),
                         Message::PreviewDirectoryLoaded,
                     );
                 } else {
-                    self.preview_entries.clear();
+                    return Task::perform(io::load_file_content(path), Message::PreviewLoaded);
                 }
             }
         }
@@ -257,7 +277,12 @@ impl Heike {
     fn set_mode(&mut self, mode: Mode) -> Task<Message> {
         self.mode = mode;
         self.input_buffer.clear();
-        Task::none()
+        match self.mode {
+            Mode::Command | Mode::Filter | Mode::Rename | Mode::Search => {
+                text_input::focus(self.input_id.clone())
+            }
+            _ => Task::none(),
+        }
     }
 
     fn input_changed(&mut self, value: String) -> Task<Message> {
@@ -562,7 +587,7 @@ impl Heike {
         }
     }
 
-    fn open_file(&mut self, path: PathBuf) -> Task<Message> {
+    fn open_file(&mut self, _path: PathBuf) -> Task<Message> {
         // TODO: Implement file opening in preview
         Task::none()
     }
@@ -611,7 +636,7 @@ impl Heike {
         ])
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let breadcrumb = self.view_breadcrumb();
         let columns = self.view_miller_columns();
         let status = self.view_status_bar();
@@ -630,7 +655,7 @@ impl Heike {
         }
     }
 
-    fn view_with_input_modal<'a>(&'a self, background: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    fn view_with_input_modal<'a>(&self, background: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         let (title, placeholder) = match &self.mode {
             Mode::Command => ("Command", ":"),
             Mode::Filter => ("Filter", "Type to filter..."),
@@ -640,6 +665,7 @@ impl Heike {
         };
 
         let input = text_input(placeholder, &self.input_buffer)
+            .id(self.input_id.clone())
             .on_input(Message::InputChanged)
             .on_submit(Message::InputSubmit)
             .padding(10)
@@ -686,7 +712,7 @@ impl Heike {
     }
 
     fn view_with_confirm_dialog<'a>(
-        &'a self,
+        &self,
         background: impl Into<Element<'a, Message>>,
         action: &ConfirmAction,
     ) -> Element<'a, Message> {
@@ -741,7 +767,7 @@ impl Heike {
         .into()
     }
 
-    fn view_breadcrumb(&self) -> Element<Message> {
+    fn view_breadcrumb(&self) -> Element<'_, Message> {
         let path_text = text(format!("  {}", self.current_path.display()))
             .size(16);
 
@@ -755,7 +781,7 @@ impl Heike {
             .into()
     }
 
-    fn view_miller_columns(&self) -> Element<Message> {
+    fn view_miller_columns(&self) -> Element<'_, Message> {
         let parent_column = self.view_parent_pane();
         let current_column = self.view_current_pane();
         let preview_column = self.view_preview_pane();
@@ -767,7 +793,7 @@ impl Heike {
             .into()
     }
 
-    fn view_parent_pane(&self) -> Element<Message> {
+    fn view_parent_pane(&self) -> Element<'_, Message> {
         let entries = if self.parent_entries.is_empty() {
             column![text("").size(12)]
         } else {
@@ -775,9 +801,15 @@ impl Heike {
                 .parent_entries
                 .iter()
                 .map(|entry| {
-                    let icon = text(entry.get_icon()).size(14);
+                    let icon = text(entry.get_icon())
+                        .size(14)
+                        .font(iced::font::Font::with_name(FONT_NAME));
                     let name = text(&entry.name).size(14);
-                    row![icon, name].spacing(8).into()
+                    let path = entry.path.clone();
+
+                    mouse_area(row![icon, name].spacing(8))
+                        .on_press(Message::Navigate(path))
+                        .into()
                 })
                 .collect();
 
@@ -800,7 +832,7 @@ impl Heike {
             .into()
     }
 
-    fn view_current_pane(&self) -> Element<Message> {
+    fn view_current_pane(&self) -> Element<'_, Message> {
         if self.loading {
             return container(text("Loading...").size(14))
                 .width(Length::FillPortion(2))
@@ -829,7 +861,9 @@ impl Heike {
                         && self.clipboard.paths.contains(&entry.path);
                     let is_multi = self.multi_select.contains(&entry.path);
 
-                    let icon = text(entry.get_icon()).size(14);
+                    let icon = text(entry.get_icon())
+                        .size(14)
+                        .font(iced::font::Font::with_name(FONT_NAME));
                     let name = text(&entry.name).size(14);
 
                     let size_str = if entry.is_dir {
@@ -889,42 +923,49 @@ impl Heike {
             .into()
     }
 
-    fn view_preview_pane(&self) -> Element<Message> {
-        let content = if let Some(idx) = self.selected {
-            if let Some(entry) = self.entries.get(idx) {
-                if entry.is_dir {
-                    // Show directory contents
-                    if self.preview_entries.is_empty() {
-                        column![text("Empty directory").size(14)]
-                    } else {
-                        let items: Vec<Element<Message>> = self
-                            .preview_entries
-                            .iter()
-                            .map(|entry| {
-                                let icon = text(entry.get_icon()).size(14);
-                                let name = text(&entry.name).size(14);
-                                row![icon, name].spacing(8).into()
-                            })
-                            .collect();
-                        column(items).spacing(2)
-                    }
-                } else {
-                    // Show file info
-                    column![text(format!(
-                        "{}\n\nSize: {}\nType: {}\nModified: {:?}",
-                        entry.name,
-                        bytesize::ByteSize::b(entry.size),
-                        entry.extension,
-                        entry.modified
-                    ))
-                    .size(14)]
-                }
-            } else {
-                column![text("No selection").size(14)]
+    fn view_preview_pane(&self) -> Element<'_, Message> {
+        let content: Element<Message> = match &self.preview_content {
+            PreviewContent::Loading => {
+                column![text("Loading preview...").size(14)]
             }
-        } else {
-            column![text("No selection").size(14)]
-        };
+            PreviewContent::Text(text_content) => {
+                column![text(text_content).size(14)]
+            }
+            PreviewContent::Image(_path) => {
+                // TODO: Implement actual image preview
+                column![text("Image preview (coming soon!)").size(14)]
+            }
+            PreviewContent::Directory(entries) => {
+                if entries.is_empty() {
+                    column![text("Empty directory").size(14)]
+                } else {
+                    let items: Vec<Element<Message>> = entries
+                        .iter()
+                        .map(|entry| {
+                            let icon = text(entry.get_icon())
+                                .size(14)
+                                .font(iced::font::Font::with_name(FONT_NAME));
+                            let name = text(&entry.name).size(14);
+                            let path = entry.path.clone();
+                            let entry_is_dir = entry.is_dir;
+
+                            mouse_area(row![icon, name].spacing(8))
+                                .on_press(if entry_is_dir {
+                                    Message::Navigate(path)
+                                } else {
+                                    Message::OpenInSystem(path)
+                                })
+                                .into()
+                        })
+                        .collect();
+                    column(items).spacing(2)
+                }
+            }
+            PreviewContent::Error(err_msg) => {
+                column![text(format!("Error: {}", err_msg)).size(14)]
+            }
+        }
+        .into();
 
         container(scrollable(content))
             .width(Length::FillPortion(2))
@@ -942,7 +983,7 @@ impl Heike {
             .into()
     }
 
-    fn view_status_bar(&self) -> Element<Message> {
+    fn view_status_bar(&self) -> Element<'_, Message> {
         let mode_text = match &self.mode {
             Mode::Normal => "NORMAL",
             Mode::Visual => "VISUAL",

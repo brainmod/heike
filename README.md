@@ -30,9 +30,9 @@ Heike is undergoing a major architectural transition from egui (immediate mode) 
 - ✅ **Selection & Multi-select:** Visual highlighting working
 - ✅ **Input Modals:** Command, filter, rename, search, and confirm dialogs
 - ✅ **Modal System:** Stack-based overlays with semi-transparent backdrops
-- ✅ **Filter Logic:** Live filtering with real-time results and match count
-- ✅ **Mouse & Keyboard:** Full interaction support for both input methods
-- ✅ **Directory Previews:** Preview pane shows directory contents
+- ✅ **Filter Logic:** Live filtering with real-time results and match count (input active, Enter finalizes filter)
+- ✅ **Mouse & Keyboard:** Full interaction support for both input methods (including parent and preview pane clickability)
+- ✅ **Directory Previews:** Preview pane shows directory contents and updates dynamically for files and directories
 - ⏳ **Preview Renderers:** Pending - image, syntax, markdown, PDF, archive viewers
 - ⏳ **Search Integration:** Pending - async content search with progress
 
