@@ -4,7 +4,7 @@ use crate::model::{Clipboard, ClipboardOp, ConfirmAction, FileEntry, Mode, Searc
 use crate::style::AppTheme;
 use crate::subscription::{file_watcher, handle_key, keyboard_subscription};
 use iced::keyboard;
-use iced::widget::{column, container, pane_grid, row, scrollable, text, text_input, Column};
+use iced::widget::{column, container, pane_grid, row, scrollable, stack, text, text_input, Column};
 use iced::{Element, Length, Size, Subscription, Task, Theme};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -552,10 +552,129 @@ impl Heike {
         let columns = self.view_miller_columns();
         let status = self.view_status_bar();
 
-        column![breadcrumb, columns, status]
+        let main_content = column![breadcrumb, columns, status]
             .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+
+        // Add modal overlays for different modes
+        match &self.mode {
+            Mode::Command | Mode::Filter | Mode::Rename | Mode::Search => {
+                self.view_with_input_modal(main_content)
+            }
+            Mode::Confirm(action) => self.view_with_confirm_dialog(main_content, action),
+            _ => main_content.into(),
+        }
+    }
+
+    fn view_with_input_modal<'a>(&'a self, background: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+        let (title, placeholder) = match &self.mode {
+            Mode::Command => ("Command", ":"),
+            Mode::Filter => ("Filter", "Type to filter..."),
+            Mode::Rename => ("Rename", "New name..."),
+            Mode::Search => ("Search", "Search pattern..."),
+            _ => ("Input", ""),
+        };
+
+        let input = text_input(placeholder, &self.input_buffer)
+            .on_input(Message::InputChanged)
+            .on_submit(Message::InputSubmit)
+            .padding(10)
+            .size(16);
+
+        let modal_content = column![
+            text(title).size(18),
+            input,
+            text("Press Enter to submit, Esc to cancel").size(12),
+        ]
+        .spacing(10)
+        .padding(20);
+
+        let modal = container(modal_content)
+            .width(Length::Fixed(500.0))
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.base.color.into()),
+                text_color: None,
+                border: iced::Border {
+                    color: theme.extended_palette().primary.strong.color,
+                    width: 2.0,
+                    radius: 8.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: iced::Color::BLACK,
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+            });
+
+        iced::widget::stack![
+            background.into(),
+            container(modal)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                    ..Default::default()
+                })
+        ]
+        .into()
+    }
+
+    fn view_with_confirm_dialog<'a>(
+        &'a self,
+        background: impl Into<Element<'a, Message>>,
+        action: &ConfirmAction,
+    ) -> Element<'a, Message> {
+        let message_text = match action {
+            ConfirmAction::Delete => {
+                let count = if !self.multi_select.is_empty() {
+                    self.multi_select.len()
+                } else {
+                    1
+                };
+                format!("Delete {} item(s)?", count)
+            }
+            ConfirmAction::Overwrite => "Overwrite existing file?".to_string(),
+        };
+
+        let dialog_content = column![
+            text(message_text).size(16),
+            text("Press 'y' or Enter to confirm, 'n' or Esc to cancel").size(12),
+        ]
+        .spacing(15)
+        .padding(20);
+
+        let dialog = container(dialog_content)
+            .width(Length::Fixed(400.0))
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.base.color.into()),
+                text_color: None,
+                border: iced::Border {
+                    color: theme.extended_palette().danger.strong.color,
+                    width: 2.0,
+                    radius: 8.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: iced::Color::BLACK,
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 16.0,
+                },
+            });
+
+        iced::widget::stack![
+            background.into(),
+            container(dialog)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                    ..Default::default()
+                })
+        ]
+        .into()
     }
 
     fn view_breadcrumb(&self) -> Element<Message> {
