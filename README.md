@@ -28,9 +28,11 @@ Heike is undergoing a major architectural transition from egui (immediate mode) 
 - ✅ **Miller Columns View:** 3-pane layout with breadcrumb and status bar
 - ✅ **File Icons:** Nerd Font glyphs displaying properly
 - ✅ **Selection & Multi-select:** Visual highlighting working
+- ✅ **Input Modals:** Command, filter, rename, search, and confirm dialogs
+- ✅ **Modal System:** Stack-based overlays with semi-transparent backdrops
 - ⏳ **Preview System:** Pending - port image, syntax, markdown, PDF, archive viewers
 - ⏳ **Search Integration:** Pending - async content search with progress
-- ⏳ **Command/Filter Input:** Pending - text input modals
+- ⏳ **Filter Logic:** Pending - live filtering of file list
 
 The egui version is preserved in `src/main.rs.egui.backup` for reference.
 
