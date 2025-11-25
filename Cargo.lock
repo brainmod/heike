@@ -1994,7 +1994,7 @@ dependencies = [
 
 [[package]]
 name = "heike"
-version = "0.7.0"
+version = "0.8.0-alpha"
 dependencies = [
  "bytesize",
  "calamine",

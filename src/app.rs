@@ -548,18 +548,255 @@ impl Heike {
     }
 
     pub fn view(&self) -> Element<Message> {
-        let content = column![
-            text("Heike - iced version (WIP)").size(24),
-            text(format!("Path: {}", self.current_path.display())),
-            text(format!("Mode: {:?}", self.mode)),
-            text(format!("Entries: {}", self.entries.len())),
-        ]
-        .spacing(10)
-        .padding(20);
+        let breadcrumb = self.view_breadcrumb();
+        let columns = self.view_miller_columns();
+        let status = self.view_status_bar();
 
-        container(content)
+        column![breadcrumb, columns, status]
             .width(Length::Fill)
             .height(Length::Fill)
+            .into()
+    }
+
+    fn view_breadcrumb(&self) -> Element<Message> {
+        let path_text = text(format!("  {}", self.current_path.display()))
+            .size(16);
+
+        container(path_text)
+            .width(Length::Fill)
+            .padding(10)
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.strong.color.into()),
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_miller_columns(&self) -> Element<Message> {
+        let parent_column = self.view_parent_pane();
+        let current_column = self.view_current_pane();
+        let preview_column = self.view_preview_pane();
+
+        row![parent_column, current_column, preview_column]
+            .spacing(2)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn view_parent_pane(&self) -> Element<Message> {
+        let entries = if self.parent_entries.is_empty() {
+            column![text("").size(12)]
+        } else {
+            let items: Vec<Element<Message>> = self
+                .parent_entries
+                .iter()
+                .map(|entry| {
+                    let icon = text(entry.get_icon()).size(14);
+                    let name = text(&entry.name).size(14);
+                    row![icon, name].spacing(8).into()
+                })
+                .collect();
+
+            column(items).spacing(2)
+        };
+
+        container(scrollable(entries))
+            .width(Length::FillPortion(1))
+            .height(Length::Fill)
+            .padding(10)
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.base.color.into()),
+                border: iced::Border {
+                    color: theme.extended_palette().background.strong.color,
+                    width: 1.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_current_pane(&self) -> Element<Message> {
+        if self.loading {
+            return container(text("Loading...").size(14))
+                .width(Length::FillPortion(2))
+                .height(Length::Fill)
+                .padding(10)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .into();
+        }
+
+        let entries = if self.entries.is_empty() {
+            column![text("Empty directory").size(14)]
+        } else {
+            let items: Vec<Element<Message>> = self
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(idx, entry)| {
+                    let is_selected = self.selected == Some(idx);
+                    let is_cut = self.clipboard.is_cut()
+                        && self.clipboard.paths.contains(&entry.path);
+                    let is_multi = self.multi_select.contains(&entry.path);
+
+                    let icon = text(entry.get_icon()).size(14);
+                    let name = text(&entry.name).size(14);
+
+                    let size_str = if entry.is_dir {
+                        String::from("DIR")
+                    } else {
+                        bytesize::ByteSize::b(entry.size).to_string()
+                    };
+                    let size_label = text(size_str).size(12);
+
+                    let row_content = row![icon, name, size_label]
+                        .spacing(8)
+                        .padding(4);
+
+                    container(row_content)
+                        .width(Length::Fill)
+                        .style(move |theme: &Theme| {
+                            let palette = theme.extended_palette();
+                            container::Style {
+                                background: if is_selected {
+                                    Some(palette.primary.weak.color.into())
+                                } else if is_multi {
+                                    Some(palette.success.weak.color.into())
+                                } else {
+                                    None
+                                },
+                                text_color: if is_cut {
+                                    Some(palette.background.strong.text)
+                                } else {
+                                    None
+                                },
+                                ..Default::default()
+                            }
+                        })
+                        .into()
+                })
+                .collect();
+
+            column(items).spacing(1)
+        };
+
+        container(scrollable(entries))
+            .width(Length::FillPortion(2))
+            .height(Length::Fill)
+            .padding(10)
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.base.color.into()),
+                border: iced::Border {
+                    color: theme.extended_palette().background.strong.color,
+                    width: 1.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_preview_pane(&self) -> Element<Message> {
+        let content = if let Some(idx) = self.selected {
+            if let Some(entry) = self.entries.get(idx) {
+                if entry.is_dir {
+                    text(format!("Directory: {}", entry.name)).size(14)
+                } else {
+                    text(format!(
+                        "{}\nSize: {}\nType: {}",
+                        entry.name,
+                        bytesize::ByteSize::b(entry.size),
+                        entry.extension
+                    ))
+                    .size(14)
+                }
+            } else {
+                text("No selection").size(14)
+            }
+        } else {
+            text("No selection").size(14)
+        };
+
+        container(scrollable(content))
+            .width(Length::FillPortion(2))
+            .height(Length::Fill)
+            .padding(10)
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.base.color.into()),
+                border: iced::Border {
+                    color: theme.extended_palette().background.strong.color,
+                    width: 1.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_status_bar(&self) -> Element<Message> {
+        let mode_text = match &self.mode {
+            Mode::Normal => "NORMAL",
+            Mode::Visual => "VISUAL",
+            Mode::Filter => "FILTER",
+            Mode::Command => "COMMAND",
+            Mode::Rename => "RENAME",
+            Mode::Search => "SEARCH",
+            Mode::SearchResults(_) => "RESULTS",
+            Mode::Confirm(_) => "CONFIRM",
+            Mode::GPrefix => "G",
+        };
+
+        let status_content = row![
+            text(format!("  {} ", mode_text))
+                .size(14)
+                .style(|theme: &Theme| text::Style {
+                    color: Some(theme.extended_palette().primary.strong.color),
+                }),
+            text(" | ").size(14),
+            text(format!(
+                "Items: {} | Selected: {}",
+                self.entries.len(),
+                self.selected.map(|i| i + 1).unwrap_or(0)
+            ))
+            .size(14),
+        ]
+        .spacing(5);
+
+        let status = if let Some(msg) = &self.message {
+            row![
+                status_content,
+                text(" | ").size(14),
+                text(msg)
+                    .size(14)
+                    .style(|theme: &Theme| text::Style {
+                        color: Some(theme.extended_palette().success.strong.color),
+                    }),
+            ]
+            .spacing(5)
+        } else if let Some(err) = &self.error {
+            row![
+                status_content,
+                text(" | ").size(14),
+                text(err)
+                    .size(14)
+                    .style(|theme: &Theme| text::Style {
+                        color: Some(theme.extended_palette().danger.strong.color),
+                    }),
+            ]
+            .spacing(5)
+        } else {
+            status_content
+        };
+
+        container(status)
+            .width(Length::Fill)
+            .padding(8)
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.strong.color.into()),
+                ..Default::default()
+            })
             .into()
     }
 
