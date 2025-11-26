@@ -9,6 +9,8 @@
 - [x] **File size limits on preview** — Add `MAX_PREVIEW_SIZE` check before `fs::read_to_string`
 - [x] **Shift+S content search hotkey** — Ensure search modal opens from all contexts
 - [x] **Arrow keys mirror h/l navigation** — Bind Left/Right arrows to parent/enter actions
+- [x] **Search results navigation scroll** — Add scroll_to_row for search results table
+- [x] **Binary file detection false positives** — Improved is_likely_binary to check null byte percentage
 
 ## High: Layout Fixes (see FIXES.md)
 
@@ -152,7 +154,7 @@ pub const ICON_COL_WIDTH: f32 = 30.0;
 pub const ROW_HEIGHT: f32 = 24.0;
 pub const DIVIDER_WIDTH: f32 = 4.0;
 pub const PARENT_BOUNDS: (f32, f32) = (100.0, 400.0);
-pub const PREVIEW_BOUNDS: (f32, f32) = (150.0, 500.0);
+pub const PREVIEW_BOUNDS: (f32, f32) = (150.0, 800.0);
 pub const MODAL_WIDTH_RATIO: f32 = 0.6;
 pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
 pub const DOUBLE_PRESS_MS: u64 = 500;

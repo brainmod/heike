@@ -1,5 +1,5 @@
-use std::fs;
 use resvg::usvg::{self, TreeParsing};
+use std::fs;
 
 fn main() {
     // Read SVG
@@ -24,7 +24,8 @@ fn main() {
     let transform = tiny_skia::Transform::from_scale(scale, scale);
     rtree.render(transform, &mut pixmap.as_mut());
 
-    pixmap.save_png("heike_icon.png")
+    pixmap
+        .save_png("heike_icon.png")
         .expect("Failed to save PNG");
 
     println!("Generated heike_icon.png (256x256)");
