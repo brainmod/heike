@@ -193,6 +193,17 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
     false
 }
 
+fn is_likely_binary(path: &Path) -> bool {
+    let mut buf = [0u8; 8192];
+    if let Ok(mut f) = fs::File::open(path) {
+        if let Ok(n) = std::io::Read::read(&mut f, &mut buf) {
+            // Check for null bytes (binary indicator)
+            return buf[..n].contains(&0);
+        }
+    }
+    false
+}
+
 // --- Search Implementation ---
 
 struct SearchSink {
@@ -1850,14 +1861,19 @@ impl Heike {
         ];
 
         if text_extensions.contains(&entry.extension.as_str()) || entry.extension.is_empty() {
-            // Try to read as text
-            match fs::read_to_string(&entry.path) {
-                Ok(_) => {
-                    self.render_syntax_highlighted(ui, entry);
-                    return;
-                }
-                Err(_) => {
-                    // Fall through to binary file message
+            // Early binary detection to avoid expensive text read attempts
+            if is_likely_binary(&entry.path) {
+                // Fall through to binary file message
+            } else {
+                // Try to read as text
+                match fs::read_to_string(&entry.path) {
+                    Ok(_) => {
+                        self.render_syntax_highlighted(ui, entry);
+                        return;
+                    }
+                    Err(_) => {
+                        // Fall through to binary file message
+                    }
                 }
             }
         }
@@ -1922,23 +1938,32 @@ impl eframe::App for Heike {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                // History Controls
+                // History Controls (fixed)
                 if ui.button("⬅").on_hover_text("Back (Alt+Left)").clicked() { self.navigate_back(); }
                 if ui.button("➡").on_hover_text("Forward (Alt+Right)").clicked() { self.navigate_forward(); }
                 if ui.button("⬆").on_hover_text("Up (Backspace)").clicked() { self.navigate_up(); }
                 ui.add_space(10.0);
-                
-                // Breadcrumbs
-                let components: Vec<_> = self.current_path.components().collect();
-                let mut path_acc = PathBuf::new();
-                for component in components {
-                    path_acc.push(component);
-                    let name = component.as_os_str().to_string_lossy();
-                    let label = if name.is_empty() { "/" } else { &name };
-                    if ui.button(label).clicked() { *next_navigation.borrow_mut() = Some(path_acc.clone()); }
-                    ui.label(">");
-                }
 
+                // Breadcrumbs (scrollable) - reserve space for right controls
+                let breadcrumb_width = ui.available_width() - 180.0;
+                egui::ScrollArea::horizontal()
+                    .id_salt("breadcrumbs")
+                    .max_width(breadcrumb_width)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let components: Vec<_> = self.current_path.components().collect();
+                            let mut path_acc = PathBuf::new();
+                            for component in components {
+                                path_acc.push(component);
+                                let name = component.as_os_str().to_string_lossy();
+                                let label = if name.is_empty() { "/" } else { &name };
+                                if ui.button(label).clicked() { *next_navigation.borrow_mut() = Some(path_acc.clone()); }
+                                ui.label(">");
+                            }
+                        });
+                    });
+
+                // Right controls in remaining space
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.checkbox(&mut self.show_hidden, "Hidden (.)").changed() { self.request_refresh(); }
 

@@ -7,7 +7,7 @@
 
 **Current Version:** 0.7.1 (The "UX Refinement" Update)
 
-### **Recent Updates** (2025-11-25)
+### **Recent Updates** (2025-11-26)
 
 #### **UX & Performance Improvements**
 * ✅ **Layout Stability:** Fixed text overflow clipping in all tables to prevent content from forcing panel expansion
@@ -17,6 +17,8 @@
 * ✅ **Auto-Dismiss Messages:** Error and info messages automatically disappear after 5 seconds
 * ✅ **Selection Validation:** Added bounds checking to prevent crashes when navigating filtered results
 * ✅ **Layout Constants:** Created centralized layout configuration module for consistency
+* ✅ **Breadcrumb Overflow:** Breadcrumbs now scroll horizontally for deep directory paths
+* ✅ **Binary File Detection:** Early detection of binary files prevents expensive read attempts and improves performance
 
 ### **Previous Updates** (2025-11-23)
 
