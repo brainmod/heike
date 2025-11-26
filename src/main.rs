@@ -1094,7 +1094,15 @@ impl Heike {
         }
 
         // Handle SearchResults mode navigation
-        if let AppMode::SearchResults { query: _, ref results, ref mut selected_index } = self.mode {
+        if let AppMode::SearchResults { query: ref current_query, ref results, ref mut selected_index } = self.mode {
+            if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.shift) {
+                self.search_query = current_query.clone();
+                self.search_in_progress = false;
+                self.search_file_count = 0;
+                self.mode = AppMode::SearchInput;
+                self.focus_input = true;
+                return;
+            }
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.mode = AppMode::Normal;
                 return;
@@ -1169,6 +1177,8 @@ impl Heike {
             return;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.shift) {
+            self.search_in_progress = false;
+            self.search_file_count = 0;
             self.mode = AppMode::SearchInput;
             self.focus_input = true;
             return;
@@ -1191,7 +1201,7 @@ impl Heike {
 
         // 6. Navigation (j/k/arrows)
         if self.visible_entries.is_empty() {
-             if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) { self.navigate_up(); }
+             if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::ArrowLeft)) { self.navigate_up(); }
             return;
         }
 
@@ -1208,8 +1218,8 @@ impl Heike {
             new_index = if current == 0 { max_idx } else { current - 1 };
             changed = true;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H)) { self.navigate_up(); }
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::L)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Backspace) || i.key_pressed(egui::Key::H) || i.key_pressed(egui::Key::ArrowLeft)) { self.navigate_up(); }
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::L) || i.key_pressed(egui::Key::ArrowRight)) {
             if let Some(idx) = self.selected_index {
                 if let Some(entry) = self.visible_entries.get(idx) {
                     let path = entry.path.clone(); self.navigate_to(path);
@@ -2366,8 +2376,8 @@ impl eframe::App for Heike {
                         egui::Grid::new("help_grid").striped(true).show(ui, |ui| {
                             ui.label("j / Down"); ui.label("Next Item"); ui.end_row();
                             ui.label("k / Up"); ui.label("Previous Item"); ui.end_row();
-                            ui.label("h / Backspace"); ui.label("Go to Parent"); ui.end_row();
-                            ui.label("l / Enter"); ui.label("Open / Enter Dir"); ui.end_row();
+                            ui.label("h / Left Arrow / Backspace"); ui.label("Go to Parent"); ui.end_row();
+                            ui.label("l / Right Arrow / Enter"); ui.label("Open / Enter Dir"); ui.end_row();
                             ui.label("gg / G"); ui.label("Top / Bottom"); ui.end_row();
                             ui.label("Alt + Arrows"); ui.label("History"); ui.end_row();
                             ui.label("."); ui.label("Toggle Hidden"); ui.end_row();

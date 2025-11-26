@@ -7,17 +7,19 @@
 - [ ] **Clipboard paths can go stale** — Validate source paths exist before paste operation
 - [ ] **History contains deleted directories** — Validate directory exists on back/forward navigation
 - [ ] **File size limits on preview** — Add `MAX_PREVIEW_SIZE` check before `fs::read_to_string`
+- [x] **Shift+S content search hotkey** — Ensure search modal opens from all contexts
+- [x] **Arrow keys mirror h/l navigation** — Bind Left/Right arrows to parent/enter actions
 
 ## High: Layout Fixes (see FIXES.md)
 
-- [ ] **Strip-based layout** — Replace SidePanel approach with `egui_extras::Strip` to eliminate black gap
-- [ ] **Manual resize dividers** — Add draggable dividers between panes
-- [ ] **Column clipping** — Add `.clip(true)` to all `Column::remainder()` calls
+- [x] **Strip-based layout** — Replace SidePanel approach with `egui_extras::Strip` to eliminate black gap
+- [x] **Manual resize dividers** — Add draggable dividers between panes
+- [x] **Column clipping** — Add `.clip(true)` to all `Column::remainder()` calls
 - [ ] **Truncated labels** — Add `truncated_label()` helper with ellipsis overflow
-- [ ] **ScrollArea constraints** — Add `max_height(ui.available_height())` to all ScrollAreas
-- [ ] **Image preview sizing** — Add `maintain_aspect_ratio(true)` and height constraint
-- [ ] **Responsive modals** — Scale modal width/height to screen size
-- [ ] **Breadcrumb overflow** — Wrap breadcrumbs in horizontal ScrollArea
+- [x] **ScrollArea constraints** — Add `max_height(ui.available_height())` to all ScrollAreas
+- [x] **Image preview sizing** — Add `maintain_aspect_ratio(true)` and height constraint
+- [x] **Responsive modals** — Scale modal width/height to screen size
+- [x] **Breadcrumb overflow** — Wrap breadcrumbs in horizontal ScrollArea
 
 ## High: Code Organization
 
