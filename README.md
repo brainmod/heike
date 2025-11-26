@@ -12,6 +12,7 @@
 #### **Visual Polish & Clarity**
 * ✅ **Truncated Labels:** Long names now gracefully show an ellipsis before they overflow, keeping columns tidy everywhere
 * ✅ **Symlink Indicators:** Symbolic links display an arrow glyph across panes so they stand out from regular files at a glance
+* ✅ **Rich Status Line:** Bottom bar now shows current path, focused item size/type, and total size of multi-selection
 
 ### **Previous Updates** (2025-11-29)
 

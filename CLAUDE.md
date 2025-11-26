@@ -50,7 +50,7 @@
 - [ ] **Sort options** — Name/Size/Modified/Extension, Asc/Desc, dirs-first toggle
 - [x] **Symlink indication** — Check `fs::symlink_metadata`, show indicator
 - [ ] **File permissions display** — Unix `rwxr-xr-x` format in preview
-- [ ] **Status line info** — Selected size, item count, git branch, disk space
+- [x] **Status line info** — Selected size, item count, current path display
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
 - [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
 - [ ] **Tabs** — Multiple directory tabs with `iced_aw::Tabs` or similar
@@ -64,8 +64,8 @@
 
 ## Low: Security Hardening
 
-- [ ] **Path traversal protection** — Canonicalize and verify `:mkdir`/`:touch` paths
-- [ ] **Preview size limits** — Skip preview for files > 10MB
+- [x] **Path traversal protection** — Canonicalize and verify `:mkdir`/`:touch` paths
+- [x] **Preview size limits** — Skip preview for files > 10MB
 
 ## Low: Code Quality
 

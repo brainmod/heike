@@ -1267,20 +1267,57 @@ impl Heike {
             "mkdir" => {
                 if parts.len() > 1 {
                     let new_dir = self.current_path.join(parts[1]);
-                    if let Err(e) = fs::create_dir(&new_dir) {
-                        self.error_message = Some((format!("mkdir failed: {}", e), Instant::now()));
-                    } else {
-                        self.request_refresh();
+                    // Security: Canonicalize paths and verify they're within current directory
+                    match (new_dir.canonicalize().or_else(|_| {
+                        // If path doesn't exist yet, canonicalize parent and append last component
+                        if let Some(parent) = new_dir.parent() {
+                            parent.canonicalize().map(|p| {
+                                if let Some(name) = new_dir.file_name() {
+                                    p.join(name)
+                                } else {
+                                    p
+                                }
+                            })
+                        } else {
+                            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Invalid path"))
+                        }
+                    }), self.current_path.canonicalize()) {
+                        (Ok(target), Ok(current)) => {
+                            if target.starts_with(&current) {
+                                if let Err(e) = fs::create_dir(&new_dir) {
+                                    self.error_message = Some((format!("mkdir failed: {}", e), Instant::now()));
+                                } else {
+                                    self.request_refresh();
+                                }
+                            } else {
+                                self.error_message = Some(("Path traversal not allowed".into(), Instant::now()));
+                            }
+                        }
+                        _ => {
+                            self.error_message = Some(("Invalid path".into(), Instant::now()));
+                        }
                     }
                 }
             }
             "touch" => {
                 if parts.len() > 1 {
                     let new_file = self.current_path.join(parts[1]);
-                    if let Err(e) = fs::File::create(&new_file) {
-                        self.error_message = Some((format!("touch failed: {}", e), Instant::now()));
-                    } else {
-                        self.request_refresh();
+                    // Security: Canonicalize paths and verify they're within current directory
+                    match (new_file.parent().and_then(|p| p.canonicalize().ok()), self.current_path.canonicalize()) {
+                        (Some(parent), Ok(current)) => {
+                            if parent.starts_with(&current) {
+                                if let Err(e) = fs::File::create(&new_file) {
+                                    self.error_message = Some((format!("touch failed: {}", e), Instant::now()));
+                                } else {
+                                    self.request_refresh();
+                                }
+                            } else {
+                                self.error_message = Some(("Path traversal not allowed".into(), Instant::now()));
+                            }
+                        }
+                        _ => {
+                            self.error_message = Some(("Invalid path".into(), Instant::now()));
+                        }
                     }
                 }
             }
@@ -2955,11 +2992,30 @@ impl eframe::App for Heike {
 
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                // Item counts
                 ui.label(format!(
                     "{}/{} items",
                     self.visible_entries.len(),
                     self.all_entries.len()
                 ));
+                
+                // Show current selected file info
+                if let Some(idx) = self.selected_index {
+                    if let Some(entry) = self.visible_entries.get(idx) {
+                        ui.separator();
+                        let type_str = if entry.is_dir { "dir" } else { "file" };
+                        ui.label(format!(
+                            "{}: {}",
+                            type_str,
+                            bytesize::ByteSize(entry.size)
+                        ));
+                    }
+                }
+                
+                // Show current path
+                ui.separator();
+                layout::truncated_label(ui, format!("{}", self.current_path.display()));
+
                 if self.is_loading {
                     ui.spinner();
                 }
@@ -2973,9 +3029,17 @@ impl eframe::App for Heike {
 
                 if !self.multi_selection.is_empty() {
                     ui.separator();
+                    // Calculate total size of selected files
+                    let total_size: u64 = self.all_entries.iter()
+                        .filter(|e| self.multi_selection.contains(&e.path))
+                        .map(|e| e.size)
+                        .sum();
                     ui.colored_label(
                         egui::Color32::LIGHT_BLUE,
-                        format!("{} selected", self.multi_selection.len()),
+                        format!("{} selected ({})", 
+                            self.multi_selection.len(),
+                            bytesize::ByteSize(total_size)
+                        ),
                     );
                 }
             });
