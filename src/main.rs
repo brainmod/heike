@@ -1,3 +1,5 @@
+mod layout;
+
 use eframe::egui;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -186,6 +188,17 @@ fn fuzzy_match(text: &str, query: &str) -> bool {
     for t_char in text.chars() {
         if t_char.eq_ignore_ascii_case(&q_char) {
             q_char = match q_chars.next() { Some(c) => c, None => return true };
+        }
+    }
+    false
+}
+
+fn is_likely_binary(path: &Path) -> bool {
+    let mut buf = [0u8; 8192];
+    if let Ok(mut f) = fs::File::open(path) {
+        if let Ok(n) = std::io::Read::read(&mut f, &mut buf) {
+            // Check for null bytes (binary indicator)
+            return buf[..n].contains(&0);
         }
     }
     false
@@ -557,14 +570,17 @@ struct Heike {
     search_file_count: usize,
 
     // UI State
-    error_message: Option<String>,
-    info_message: Option<String>, // New
+    error_message: Option<(String, Instant)>,  // Changed to include timestamp
+    info_message: Option<(String, Instant)>,   // Changed to include timestamp
     show_hidden: bool,
     theme: Theme,
     is_loading: bool,
     last_g_press: Option<Instant>,
     last_selection_change: Instant,
     disable_autoscroll: bool,
+
+    // Layout State (Strip-based layout)
+    panel_widths: [f32; 2],      // [parent, preview] - current is remainder
 
     // Async Communication
     command_tx: Sender<IoCommand>,
@@ -638,13 +654,14 @@ impl Heike {
             search_in_progress: false,
             search_file_count: 0,
             error_message: None,
-            info_message: None,           // Init
+            info_message: None,
             show_hidden: false,
             theme: Theme::Dark,
             is_loading: false,
             last_g_press: None,
             last_selection_change: Instant::now(),
             disable_autoscroll: false,
+            panel_widths: [layout::PARENT_DEFAULT, layout::PREVIEW_DEFAULT],
             command_tx: cmd_tx,
             result_rx: res_rx,
             watcher: None,
@@ -686,6 +703,7 @@ impl Heike {
             // Only set to 0 if there's no selection yet
             self.selected_index = Some(0);
         }
+        self.validate_selection();
     }
 
     fn setup_watcher(&mut self, ctx: &egui::Context) {
@@ -707,7 +725,7 @@ impl Heike {
             Ok(mut watcher) => {
                 // Watch the current directory
                 if let Err(e) = watcher.watch(&self.current_path, RecursiveMode::NonRecursive) {
-                    self.error_message = Some(format!("Failed to watch directory: {}", e));
+                    self.error_message = Some((format!("Failed to watch directory: {}", e), Instant::now()));
                     self.watcher = None;
                     self.watched_path = None;
                 } else {
@@ -716,7 +734,7 @@ impl Heike {
                 }
             }
             Err(e) => {
-                self.error_message = Some(format!("Failed to create watcher: {}", e));
+                self.error_message = Some((format!("Failed to create watcher: {}", e), Instant::now()));
                 self.watcher = None;
                 self.watched_path = None;
             }
@@ -769,8 +787,8 @@ impl Heike {
                         results,
                         selected_index: 0,
                     };
-                    self.info_message = Some(format!("Found {} matches in {} files",
-                        result_count, self.search_file_count));
+                    self.info_message = Some((format!("Found {} matches in {} files",
+                        result_count, self.search_file_count), Instant::now()));
                 }
                 IoResult::SearchProgress(count) => {
                     self.search_file_count = count;
@@ -778,7 +796,7 @@ impl Heike {
                 IoResult::Error(msg) => {
                     self.is_loading = false;
                     self.search_in_progress = false;
-                    self.error_message = Some(msg);
+                    self.error_message = Some((msg, Instant::now()));
                     self.all_entries.clear();
                     self.visible_entries.clear();
                 }
@@ -805,7 +823,7 @@ impl Heike {
 
             self.finish_navigation();
         } else if let Err(e) = open::that(&path) {
-            self.error_message = Some(format!("Could not open file: {}", e));
+            self.error_message = Some((format!("Could not open file: {}", e), Instant::now()));
         }
     }
 
@@ -869,7 +887,7 @@ impl Heike {
         }
         
         let op_text = if self.clipboard_op == Some(ClipboardOp::Copy) { "Yanked" } else { "Cut" };
-        self.info_message = Some(format!("{} {} files", op_text, self.clipboard.len()));
+        self.info_message = Some((format!("{} {} files", op_text, self.clipboard.len()), Instant::now()));
     }
 
     fn paste_clipboard(&mut self) {
@@ -900,8 +918,8 @@ impl Heike {
             }
         }
 
-        if !errors.is_empty() { self.error_message = Some(errors.join(" | ")); } 
-        else { self.info_message = Some(format!("Processed {} files", count)); }
+        if !errors.is_empty() { self.error_message = Some((errors.join(" | "), Instant::now())); }
+        else { self.info_message = Some((format!("Processed {} files", count), Instant::now())); }
 
         if op == ClipboardOp::Cut { self.clipboard.clear(); self.clipboard_op = None; }
         self.request_refresh();
@@ -924,7 +942,7 @@ impl Heike {
         self.mode = AppMode::Normal;
         self.multi_selection.clear();
         self.request_refresh();
-        self.info_message = Some("Items deleted".into());
+        self.info_message = Some(("Items deleted".into(), Instant::now()));
     }
 
     fn perform_rename(&mut self) {
@@ -934,9 +952,9 @@ impl Heike {
                 if !new_name.is_empty() {
                     let new_path = entry.path.parent().unwrap().join(new_name);
                     if let Err(e) = fs::rename(&entry.path, &new_path) {
-                        self.error_message = Some(format!("Rename failed: {}", e));
+                        self.error_message = Some((format!("Rename failed: {}", e), Instant::now()));
                     } else {
-                        self.info_message = Some("Renamed successfully".into());
+                        self.info_message = Some(("Renamed successfully".into(), Instant::now()));
                     }
                 }
             }
@@ -944,6 +962,18 @@ impl Heike {
         self.mode = AppMode::Normal;
         self.command_buffer.clear();
         self.request_refresh();
+    }
+
+    // --- Selection Validation ---
+
+    fn validate_selection(&mut self) {
+        if let Some(idx) = self.selected_index {
+            if self.visible_entries.is_empty() {
+                self.selected_index = None;
+            } else if idx >= self.visible_entries.len() {
+                self.selected_index = Some(self.visible_entries.len() - 1);
+            }
+        }
     }
 
     // --- Drag and Drop Handling ---
@@ -969,9 +999,9 @@ impl Heike {
         }
 
         if !errors.is_empty() {
-            self.error_message = Some(errors.join(" | "));
+            self.error_message = Some((errors.join(" | "), Instant::now()));
         } else if count > 0 {
-            self.info_message = Some(format!("Copied {} file(s)", count));
+            self.info_message = Some((format!("Copied {} file(s)", count), Instant::now()));
         }
 
         if count > 0 {
@@ -993,18 +1023,18 @@ impl Heike {
             "mkdir" => {
                 if parts.len() > 1 {
                     let new_dir = self.current_path.join(parts[1]);
-                    if let Err(e) = fs::create_dir(&new_dir) { self.error_message = Some(format!("mkdir failed: {}", e)); } 
+                    if let Err(e) = fs::create_dir(&new_dir) { self.error_message = Some((format!("mkdir failed: {}", e), Instant::now())); }
                     else { self.request_refresh(); }
                 }
             },
             "touch" => {
                  if parts.len() > 1 {
                     let new_file = self.current_path.join(parts[1]);
-                    if let Err(e) = fs::File::create(&new_file) { self.error_message = Some(format!("touch failed: {}", e)); } 
+                    if let Err(e) = fs::File::create(&new_file) { self.error_message = Some((format!("touch failed: {}", e), Instant::now())); }
                     else { self.request_refresh(); }
                 }
             }
-            _ => { self.error_message = Some(format!("Unknown command: {}", parts[0])); }
+            _ => { self.error_message = Some((format!("Unknown command: {}", parts[0]), Instant::now())); }
         }
     }
 
@@ -1218,7 +1248,12 @@ impl Heike {
                 let theme_name = if self.theme == Theme::Dark { "base16-ocean.dark" } else { "base16-ocean.light" };
                 let theme = &self.theme_set.themes[theme_name];
 
-                egui::ScrollArea::vertical().id_salt("preview_code").show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("preview_code")
+                    .auto_shrink([false, false])
+                    .max_height(ui.available_height())
+                    .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width());
                     let mut highlighter = HighlightLines::new(syntax, theme);
 
                     // Build a single LayoutJob with all formatted text to avoid per-line layout overhead
@@ -1258,7 +1293,12 @@ impl Heike {
     fn render_markdown_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
         match fs::read_to_string(&entry.path) {
             Ok(content) => {
-                egui::ScrollArea::vertical().id_salt("preview_md").show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("preview_md")
+                    .auto_shrink([false, false])
+                    .max_height(ui.available_height())
+                    .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width());
                     let parser = Parser::new(&content);
                     let mut in_code_block = false;
                     let mut in_heading = false;
@@ -1386,14 +1426,19 @@ impl Heike {
                 ));
                 ui.separator();
 
-                egui::ScrollArea::vertical().id_salt("preview_archive").show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("preview_archive")
+                    .auto_shrink([false, false])
+                    .max_height(ui.available_height())
+                    .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width());
                     use egui_extras::{TableBuilder, Column};
                     TableBuilder::new(ui)
                         .striped(true)
                         .resizable(false)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                         .column(Column::auto().at_least(30.0))
-                        .column(Column::remainder())
+                        .column(Column::remainder().clip(true))
                         .column(Column::auto().at_least(80.0))
                         .body(|body| {
                             body.rows(20.0, items.len(), |mut row| {
@@ -1495,7 +1540,12 @@ impl Heike {
                                 ui.label(egui::RichText::new("Document appears to be empty").italics().weak());
                             });
                         } else {
-                            egui::ScrollArea::vertical().id_salt("docx_preview").show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("docx_preview")
+                                .auto_shrink([false, false])
+                                .max_height(ui.available_height())
+                                .show(ui, |ui| {
+                                ui.set_max_width(ui.available_width());
                                 ui.add_space(5.0);
                                 ui.label(egui::RichText::new(&text_content).monospace());
                             });
@@ -1540,7 +1590,12 @@ impl Heike {
                     ui.add_space(5.0);
                 });
 
-                egui::ScrollArea::vertical().id_salt("xlsx_preview").show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("xlsx_preview")
+                    .auto_shrink([false, false])
+                    .max_height(ui.available_height())
+                    .show(ui, |ui| {
+                    ui.set_max_width(ui.available_width());
                     for sheet_name in sheet_names.iter().take(3) {  // Preview first 3 sheets
                         if let Ok(range) = $workbook.worksheet_range(sheet_name) {
                             ui.add_space(10.0);
@@ -1698,12 +1753,17 @@ impl Heike {
 
             match read_directory(&entry.path, self.show_hidden) {
                 Ok(entries) => {
-                    egui::ScrollArea::vertical().id_salt("preview_dir").show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("preview_dir")
+                        .auto_shrink([false, false])
+                        .max_height(ui.available_height())
+                        .show(ui, |ui| {
+                        ui.set_max_width(ui.available_width());
                         use egui_extras::{TableBuilder, Column};
                         TableBuilder::new(ui).striped(true).resizable(false)
                             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                             .column(Column::auto().at_least(30.0))
-                            .column(Column::remainder())
+                            .column(Column::remainder().clip(true))
                             .body(|body| {
                                 body.rows(24.0, entries.len(), |mut row| {
                                     let preview_entry = &entries[row.index()];
@@ -1737,8 +1797,20 @@ impl Heike {
         // Image preview
         if matches!(entry.extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico") {
             let uri = format!("file://{}", entry.path.display());
-            egui::ScrollArea::vertical().id_salt("preview_img").show(ui, |ui| {
-                ui.add(egui::Image::new(uri).max_width(ui.available_width()));
+            egui::ScrollArea::vertical()
+                .id_salt("preview_img")
+                .auto_shrink([false, false])
+                .max_height(ui.available_height())
+                .show(ui, |ui| {
+                ui.set_max_width(ui.available_width());
+                let available = ui.available_size();
+                ui.add(
+                    egui::Image::new(uri)
+                        .max_width(available.x)
+                        .max_height(available.y - 100.0)
+                        .maintain_aspect_ratio(true)
+                        .shrink_to_fit()
+                );
             });
             return;
         }
@@ -1789,14 +1861,19 @@ impl Heike {
         ];
 
         if text_extensions.contains(&entry.extension.as_str()) || entry.extension.is_empty() {
-            // Try to read as text
-            match fs::read_to_string(&entry.path) {
-                Ok(_) => {
-                    self.render_syntax_highlighted(ui, entry);
-                    return;
-                }
-                Err(_) => {
-                    // Fall through to binary file message
+            // Early binary detection to avoid expensive text read attempts
+            if is_likely_binary(&entry.path) {
+                // Fall through to binary file message
+            } else {
+                // Try to read as text
+                match fs::read_to_string(&entry.path) {
+                    Ok(_) => {
+                        self.render_syntax_highlighted(ui, entry);
+                        return;
+                    }
+                    Err(_) => {
+                        // Fall through to binary file message
+                    }
                 }
             }
         }
@@ -1821,6 +1898,18 @@ impl eframe::App for Heike {
         match self.theme {
             Theme::Light => ctx.set_visuals(egui::Visuals::light()),
             Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+        }
+
+        // Auto-dismiss old messages (after 5 seconds)
+        if let Some((_, time)) = &self.error_message {
+            if time.elapsed() > Duration::from_secs(5) {
+                self.error_message = None;
+            }
+        }
+        if let Some((_, time)) = &self.info_message {
+            if time.elapsed() > Duration::from_secs(5) {
+                self.info_message = None;
+            }
         }
 
         self.setup_watcher(ctx);
@@ -1849,23 +1938,32 @@ impl eframe::App for Heike {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                // History Controls
+                // History Controls (fixed)
                 if ui.button("⬅").on_hover_text("Back (Alt+Left)").clicked() { self.navigate_back(); }
                 if ui.button("➡").on_hover_text("Forward (Alt+Right)").clicked() { self.navigate_forward(); }
                 if ui.button("⬆").on_hover_text("Up (Backspace)").clicked() { self.navigate_up(); }
                 ui.add_space(10.0);
-                
-                // Breadcrumbs
-                let components: Vec<_> = self.current_path.components().collect();
-                let mut path_acc = PathBuf::new();
-                for component in components {
-                    path_acc.push(component);
-                    let name = component.as_os_str().to_string_lossy();
-                    let label = if name.is_empty() { "/" } else { &name };
-                    if ui.button(label).clicked() { *next_navigation.borrow_mut() = Some(path_acc.clone()); }
-                    ui.label(">");
-                }
 
+                // Breadcrumbs (scrollable) - reserve space for right controls
+                let breadcrumb_width = ui.available_width() - 180.0;
+                egui::ScrollArea::horizontal()
+                    .id_salt("breadcrumbs")
+                    .max_width(breadcrumb_width)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let components: Vec<_> = self.current_path.components().collect();
+                            let mut path_acc = PathBuf::new();
+                            for component in components {
+                                path_acc.push(component);
+                                let name = component.as_os_str().to_string_lossy();
+                                let label = if name.is_empty() { "/" } else { &name };
+                                if ui.button(label).clicked() { *next_navigation.borrow_mut() = Some(path_acc.clone()); }
+                                ui.label(">");
+                            }
+                        });
+                    });
+
+                // Right controls in remaining space
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.checkbox(&mut self.show_hidden, "Hidden (.)").changed() { self.request_refresh(); }
 
@@ -1907,8 +2005,8 @@ impl eframe::App for Heike {
                 ui.label(format!("{}/{} items", self.visible_entries.len(), self.all_entries.len()));
                 if self.is_loading { ui.spinner(); }
                 
-                if let Some(msg) = &self.info_message { ui.colored_label(egui::Color32::GREEN, msg); }
-                if let Some(err) = &self.error_message { ui.colored_label(egui::Color32::RED, format!(" | {}", err)); }
+                if let Some((msg, _)) = &self.info_message { ui.colored_label(egui::Color32::GREEN, msg); }
+                if let Some((err, _)) = &self.error_message { ui.colored_label(egui::Color32::RED, format!(" | {}", err)); }
                 
                 if !self.multi_selection.is_empty() {
                     ui.separator();
@@ -1935,11 +2033,16 @@ impl eframe::App for Heike {
                     columns[0].vertical(|ui| {
                         ui.heading("Matches");
                         ui.separator();
-                        egui::ScrollArea::vertical().id_salt("search_results_scroll").show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("search_results_scroll")
+                            .auto_shrink([false, false])
+                            .max_height(ui.available_height())
+                            .show(ui, |ui| {
+                            ui.set_max_width(ui.available_width());
                             use egui_extras::{TableBuilder, Column};
                             TableBuilder::new(ui).striped(true).resizable(false)
                                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                .column(Column::remainder())
+                                .column(Column::remainder().clip(true))
                                 .body(|body| {
                                     body.rows(40.0, results.len(), |mut row| {
                                         let row_index = row.index();
@@ -1982,7 +2085,12 @@ impl eframe::App for Heike {
                             ui.separator();
 
                             // Show context around the match
-                            egui::ScrollArea::vertical().id_salt("search_preview_scroll").show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .id_salt("search_preview_scroll")
+                                .auto_shrink([false, false])
+                                .max_height(ui.available_height())
+                                .show(ui, |ui| {
+                                ui.set_max_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     ui.label(format!("Line {}:", result.line_number));
                                     ui.label(egui::RichText::new(&result.line_content).code());
@@ -2013,12 +2121,17 @@ impl eframe::App for Heike {
             ui.add_space(4.0);
             ui.vertical_centered(|ui| { ui.heading("Parent"); });
             ui.separator();
-            egui::ScrollArea::vertical().id_salt("parent_scroll").show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("parent_scroll")
+                .auto_shrink([false, false])
+                .max_height(ui.available_height())
+                .show(ui, |ui| {
+                ui.set_max_width(ui.available_width());
                 use egui_extras::{TableBuilder, Column};
                 TableBuilder::new(ui).striped(true).resizable(false)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::auto().at_least(30.0))
-                    .column(Column::remainder())
+                    .column(Column::remainder().clip(true))
                     .body(|body| {
                         body.rows(24.0, self.parent_entries.len(), |mut row| {
                             let entry = &self.parent_entries[row.index()];
@@ -2074,7 +2187,10 @@ impl eframe::App for Heike {
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(layout::modal_width(ctx))
                     .show(ctx, |ui| {
+                        ui.set_max_height(layout::modal_max_height(ctx));
+                        egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.heading("Key Bindings");
                         ui.separator();
                         egui::Grid::new("help_grid").striped(true).show(ui, |ui| {
@@ -2095,6 +2211,7 @@ impl eframe::App for Heike {
                         });
                         ui.add_space(10.0);
                         if ui.button("Close").clicked() { self.mode = AppMode::Normal; }
+                        });
                     });
             }
 
@@ -2104,8 +2221,10 @@ impl eframe::App for Heike {
                     .collapsible(false)
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .default_width(layout::modal_width(ctx))
                     .show(ctx, |ui| {
-                        ui.set_min_width(400.0);
+                        ui.set_max_height(layout::modal_max_height(ctx));
+                        egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.label("Search for content in files:");
                         ui.add_space(5.0);
 
@@ -2147,6 +2266,7 @@ impl eframe::App for Heike {
                                 ui.label(format!("Searching... ({} files)", self.search_file_count));
                             });
                         }
+                        });
                     });
             }
 
@@ -2177,7 +2297,7 @@ impl eframe::App for Heike {
                 let mut table = TableBuilder::new(ui).striped(true).resizable(false)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                     .column(Column::initial(30.0))
-                    .column(Column::remainder());
+                    .column(Column::remainder().clip(true));
 
                 // Only scroll to selected row if autoscroll is not disabled
                 if !self.disable_autoscroll {
@@ -2242,7 +2362,7 @@ impl eframe::App for Heike {
                                             app.clipboard.clear();
                                             app.clipboard.insert(path);
                                             app.clipboard_op = Some(ClipboardOp::Copy);
-                                            app.info_message = Some("Copied 1 file".into());
+                                            app.info_message = Some(("Copied 1 file".into(), Instant::now()));
                                         }));
                                         ui.close();
                                     }
@@ -2253,7 +2373,7 @@ impl eframe::App for Heike {
                                             app.clipboard.clear();
                                             app.clipboard.insert(path);
                                             app.clipboard_op = Some(ClipboardOp::Cut);
-                                            app.info_message = Some("Cut 1 file".into());
+                                            app.info_message = Some(("Cut 1 file".into(), Instant::now()));
                                         }));
                                         ui.close();
                                     }
@@ -2293,13 +2413,13 @@ impl eframe::App for Heike {
                                         let modified = entry_clone.modified;
                                         let is_dir = entry_clone.is_dir;
                                         *context_action.borrow_mut() = Some(Box::new(move |app: &mut Self| {
-                                            app.info_message = Some(format!(
+                                            app.info_message = Some((format!(
                                                 "{} | {} | Modified: {}",
                                                 if is_dir { "Directory" } else { "File" },
                                                 bytesize::ByteSize(size),
                                                 chrono::DateTime::<chrono::Local>::from(modified)
                                                     .format("%Y-%m-%d %H:%M")
-                                            ));
+                                            ), Instant::now()));
                                         }));
                                         ui.close();
                                     }
