@@ -5,9 +5,17 @@
 
 ## **Project Status: Active Prototype**
 
-**Current Version:** 0.7.2 (The "Strip-Based Layout Refactor" Update)
+**Current Version:** 0.7.3 (The "Hotkey Fixes" Update)
 
-### **Recent Updates** (2025-11-26)
+### **Recent Updates** (2025-11-27)
+
+#### **Hotkey & Navigation Improvements**
+* ✅ **Fixed Shift+S Search Hotkey:** Content search now properly triggered with Shift+S in all modes
+* ✅ **Arrow Key Vim Bindings:** Left/Right arrow keys now work like h/l for parent/child navigation
+* ✅ **Enhanced Search UX:** Press Shift+S in search results mode to modify search parameters
+* ✅ **Updated Help Documentation:** Help modal now reflects all arrow key bindings
+
+### **Previous Updates** (2025-11-26)
 
 #### **Strip-Based Layout Refactor**
 * ✅ **Eliminated Black Gap Bug:** Replaced separate SidePanel approach with egui_extras::Strip for seamless layout
@@ -78,11 +86,13 @@
 ### **Navigation & Input**
 * **Vim-style Keybindings:**
   * `j`/`k` or Arrow Keys: Navigate up/down
-  * `h`/`l` or Backspace/Enter: Parent directory / Enter directory
+  * `h`/Left Arrow or Backspace: Go to parent directory
+  * `l`/Right Arrow or Enter: Enter directory / Open file
   * `gg` / `G`: Jump to top / bottom
   * `v`: Visual selection mode for multi-select
   * `/`: Fuzzy filter mode
   * `:`: Command mode
+  * `Shift+S`: Content search
   * `Esc`: Return to normal mode
 * **Mouse Support:**
   * Click to select
