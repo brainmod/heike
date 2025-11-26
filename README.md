@@ -5,9 +5,18 @@
 
 ## **Project Status: Active Prototype**
 
-**Current Version:** 0.7.1 (The "UX Refinement" Update)
+**Current Version:** 0.7.2 (The "Strip-Based Layout Refactor" Update)
 
 ### **Recent Updates** (2025-11-26)
+
+#### **Strip-Based Layout Refactor**
+* ✅ **Eliminated Black Gap Bug:** Replaced separate SidePanel approach with egui_extras::Strip for seamless layout
+* ✅ **Synchronized Panel Sizing:** All three panes (parent, current, preview) now use coordinated sizing through Strip
+* ✅ **Resizable Dividers:** Added visual divider bars between panes with drag-to-resize functionality
+* ✅ **Layout State Management:** Centralized panel width tracking for consistent behavior
+* ✅ **Improved Responsiveness:** Layout properly adapts to window maximize/resize without gaps or desyncing
+
+### **Previous Updates** (2025-11-26)
 
 #### **UX & Performance Improvements**
 * ✅ **Layout Stability:** Fixed text overflow clipping in all tables to prevent content from forcing panel expansion
