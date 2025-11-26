@@ -1,329 +1,172 @@
-# Heike: egui → iced Transition Guide
+# Heike: Development Task List
 
-## Overview
+## Critical: Bugs
 
-This document outlines the architectural transition from egui (immediate mode) to iced (Elm architecture) for the Heike file manager. The goal is idiomatic iced, not a 1:1 port.
+- [ ] **Race condition in async loading** — Verify `current_path` matches result path before applying `DirectoryLoaded`
+- [ ] **Selection lost after filter clear** — Restore selection to previously selected item when exiting filter mode
+- [ ] **Clipboard paths can go stale** — Validate source paths exist before paste operation
+- [ ] **History contains deleted directories** — Validate directory exists on back/forward navigation
+- [ ] **File size limits on preview** — Add `MAX_PREVIEW_SIZE` check before `fs::read_to_string`
 
-## Package Versions (as of Nov 2025)
+## High: Layout Fixes (see FIXES.md)
 
-```toml
-[dependencies]
-# Core
-iced = { version = "0.13", features = ["image", "svg", "tokio", "highlighter"] }
-iced_aw = "0.11"  # Additional widgets (tabs, menu, split)
+- [ ] **Strip-based layout** — Replace SidePanel approach with `egui_extras::Strip` to eliminate black gap
+- [ ] **Manual resize dividers** — Add draggable dividers between panes
+- [ ] **Column clipping** — Add `.clip(true)` to all `Column::remainder()` calls
+- [ ] **Truncated labels** — Add `truncated_label()` helper with ellipsis overflow
+- [ ] **ScrollArea constraints** — Add `max_height(ui.available_height())` to all ScrollAreas
+- [ ] **Image preview sizing** — Add `maintain_aspect_ratio(true)` and height constraint
+- [ ] **Responsive modals** — Scale modal width/height to screen size
+- [ ] **Breadcrumb overflow** — Wrap breadcrumbs in horizontal ScrollArea
 
-# Async runtime
-tokio = { version = "1.41", features = ["full"] }
+## High: Code Organization
 
-# Retained from current
-chrono = "0.4"
-directories = "6.0"
-bytesize = "1.3"
-notify = "7.0"
-syntect = "5.2"
-pulldown-cmark = "0.12"
-zip = "2.2"
-tar = "0.4"
-flate2 = "1.1"
-id3 = "1.14"
-lopdf = "0.36"
-calamine = "0.32"
-docx-rs = "0.4"
-grep-searcher = "0.1"
-grep-regex = "0.1"
-ignore = "0.4"
-rayon = "1.10"
-image = "0.25"
-open = "5.3"
-```
+- [ ] **Split monolith** — Extract into modules:
+  - [ ] `src/app.rs` — Heike struct, update loop
+  - [ ] `src/entry.rs` — FileEntry
+  - [ ] `src/state/mod.rs` — Mode, Clipboard, Search state structs
+  - [ ] `src/io/mod.rs` — Directory reading, search, watcher, worker thread
+  - [ ] `src/view/mod.rs` — Panel rendering, preview, modals
+  - [ ] `src/input.rs` — Keyboard handling
+  - [ ] `src/style.rs` — Theme, layout constants
+- [ ] **Group Heike fields** — Split into `NavigationState`, `EntryState`, `ModeState`, etc.
+- [ ] **Layout constants module** — Extract magic numbers to named constants
 
-## Architecture Shift
+## Medium: Performance
 
-### egui (Current)
-- Immediate mode: rebuild UI every frame
-- State mutation during render
-- Input handled inline with drawing
-- `RefCell` patterns for deferred actions
+- [ ] **Incremental watcher updates** — Diff fs events instead of full refresh
+- [ ] **Virtual scrolling for code preview** — Only highlight visible lines
+- [ ] **Preview caching** — Memoize preview content by path + modified time
+- [ ] **Parent directory caching** — Skip re-read when parent unchanged
+- [ ] **Lazy archive preview** — Don't iterate full archive for count
 
-### iced (Target)
-- Elm architecture: Model → Message → Update → View
-- Immutable view, mutations only in `update()`
-- `Command`/`Task` for async operations
-- `Subscription` for external events (file watcher, keyboard)
+## Medium: UX Features
 
-## Core Types Mapping
+- [ ] **Trash bin support** — Add `trash` crate, replace `fs::remove_file`
+- [ ] **Sort options** — Name/Size/Modified/Extension, Asc/Desc, dirs-first toggle
+- [ ] **Symlink indication** — Check `fs::symlink_metadata`, show indicator
+- [ ] **File permissions display** — Unix `rwxr-xr-x` format in preview
+- [ ] **Status line info** — Selected size, item count, git branch, disk space
+- [ ] **Bulk rename** — vidir-style multi-file rename mode
+- [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
+- [ ] **Tabs** — Multiple directory tabs with `iced_aw::Tabs` or similar
 
-```rust
-// === MODEL ===
-pub struct Heike {
-    // Navigation
-    current_path: PathBuf,
-    history: Vec<PathBuf>,
-    history_idx: usize,
-    
-    // Entries
-    entries: Vec<FileEntry>,
-    parent_entries: Vec<FileEntry>,
-    selected: Option<usize>,
-    multi_select: HashSet<PathBuf>,
-    
-    // Mode (replaces AppMode enum)
-    mode: Mode,
-    input_buffer: String,
-    
-    // Clipboard
-    clipboard: Clipboard,
-    
-    // Search
-    search: SearchState,
-    
-    // Settings
-    show_hidden: bool,
-    theme: Theme,
-}
+## Medium: Error Handling
 
-#[derive(Default)]
-pub enum Mode {
-    #[default]
-    Normal,
-    Visual,
-    Filter,
-    Command,
-    Rename,
-    Search,
-    SearchResults(Vec<SearchResult>),
-    Confirm(ConfirmAction),
-}
+- [ ] **Search progress tracking** — Track files searched, skipped, errors
+- [ ] **Retry logic for file ops** — Backoff retry for transient failures
+- [ ] **Consistent Result/Option usage** — Standardize error handling patterns
+- [ ] **Message auto-dismiss** — Clear info/error messages after timeout
 
-// === MESSAGES ===
-#[derive(Debug, Clone)]
-pub enum Message {
-    // Navigation
-    Navigate(PathBuf),
-    NavigateUp,
-    NavigateBack,
-    NavigateForward,
-    Select(usize),
-    SelectDelta(i32),  // +1/-1 for j/k
-    
-    // Modes
-    SetMode(Mode),
-    InputChanged(String),
-    InputSubmit,
-    
-    // File ops
-    Yank,
-    Cut,
-    Paste,
-    Delete,
-    ConfirmDelete,
-    
-    // Async results
-    DirectoryLoaded(Result<Vec<FileEntry>, String>),
-    SearchComplete(Vec<SearchResult>),
-    FileWatcherEvent,
-    
-    // UI
-    ToggleHidden,
-    ToggleTheme,
-    OpenFile(PathBuf),
-}
-```
+## Low: Security Hardening
 
-## Idiomatic iced Patterns
+- [ ] **Path traversal protection** — Canonicalize and verify `:mkdir`/`:touch` paths
+- [ ] **Preview size limits** — Skip preview for files > 10MB
 
-### 1. Use `Task` for Async I/O
+## Low: Code Quality
 
-```rust
-fn update(&mut self, message: Message) -> Task<Message> {
-    match message {
-        Message::Navigate(path) => {
-            self.current_path = path.clone();
-            Task::perform(
-                load_directory(path, self.show_hidden),
-                Message::DirectoryLoaded
-            )
-        }
-        Message::DirectoryLoaded(Ok(entries)) => {
-            self.entries = entries;
-            Task::none()
-        }
-        _ => Task::none()
-    }
-}
+- [ ] **Remove dead code** — Audit unused imports and functions
+- [ ] **Reduce cloning** — Clone only PathBuf in context menus, not full entry
+- [ ] **Fix double-press timer** — Clear stale `last_g_press` properly
 
-async fn load_directory(path: PathBuf, show_hidden: bool) -> Result<Vec<FileEntry>, String> {
-    tokio::task::spawn_blocking(move || read_directory(&path, show_hidden))
-        .await
-        .map_err(|e| e.to_string())?
-}
-```
+## Low: Additional Features
 
-### 2. Use `Subscription` for File Watcher
+- [ ] **Settings persistence** — Save panel widths, theme, show_hidden to TOML
+- [ ] **CLI path argument** — Accept starting directory as arg
+- [ ] **zoxide integration** — Jump to frecent directories
+- [ ] **Git status indicators** — Show modified/untracked/ignored status
+- [ ] **Custom opener rules** — Config file for extension → application mapping
 
-```rust
-fn subscription(&self) -> Subscription<Message> {
-    Subscription::batch([
-        keyboard::on_key_press(handle_key),
-        file_watcher_subscription(self.current_path.clone()),
-    ])
-}
+## Backlog: Future Considerations
 
-fn file_watcher_subscription(path: PathBuf) -> Subscription<Message> {
-    iced::subscription::channel(path.clone(), 100, |mut output| async move {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
-        let mut watcher = notify::recommended_watcher(move |_| {
-            let _ = tx.blocking_send(());
-        }).unwrap();
-        watcher.watch(&path, RecursiveMode::NonRecursive).unwrap();
-        
-        loop {
-            if rx.recv().await.is_some() {
-                let _ = output.send(Message::FileWatcherEvent).await;
-            }
-        }
-    })
-}
-```
+- [ ] **Configurable keybindings** — TOML-based keymap
+- [ ] **Custom themes** — User-defined color schemes
+- [ ] **Plugin system** — Lua or WASM extensibility
+- [ ] **Task manager UI** — Show async operation progress
+- [ ] **Split panes** — Side-by-side directory comparison
 
-### 3. Use `pane_grid` for Miller Columns
+---
 
-```rust
-fn view(&self) -> Element<Message> {
-    let panes = pane_grid::PaneGrid::new(&self.panes, |_id, pane, _| {
-        pane_grid::Content::new(match pane {
-            Pane::Parent => self.view_parent_list(),
-            Pane::Current => self.view_current_list(),
-            Pane::Preview => self.view_preview(),
-        })
-    })
-    .width(Fill)
-    .height(Fill)
-    .on_resize(10, Message::PaneResized);
-    
-    container(panes).into()
-}
-```
+## Yazi Feature Parity
 
-### 4. Keyboard Handling via Subscription
+| Feature | Status |
+|---------|--------|
+| Async I/O | ✅ |
+| Miller columns | ✅ |
+| Vim keybindings | ✅ |
+| Visual mode | ✅ |
+| Filter `/` | ✅ |
+| Command `:` | ✅ |
+| Image preview | ✅ |
+| Syntax highlighting | ✅ |
+| Archive preview | ✅ |
+| Content search | ✅ |
+| Tabs | ❌ |
+| Bulk rename | ❌ |
+| Trash bin | ❌ |
+| Bookmarks | ❌ |
+| Git status | ❌ |
+| Task manager | ❌ |
+| Plugin system | ❌ |
 
-```rust
-fn handle_key(key: Key, modifiers: Modifiers) -> Option<Message> {
-    use keyboard::key::Named;
-    
-    match (key, modifiers) {
-        // Vim navigation
-        (Key::Character(c), Modifiers::NONE) => match c.as_str() {
-            "j" => Some(Message::SelectDelta(1)),
-            "k" => Some(Message::SelectDelta(-1)),
-            "h" => Some(Message::NavigateUp),
-            "l" => Some(Message::InputSubmit), // Enter dir
-            "g" => Some(Message::SetMode(Mode::GPrefix)),
-            "G" => Some(Message::SelectLast),
-            "y" => Some(Message::Yank),
-            "x" => Some(Message::Cut),
-            "p" => Some(Message::Paste),
-            "d" => Some(Message::SetMode(Mode::Confirm(ConfirmAction::Delete))),
-            "r" => Some(Message::SetMode(Mode::Rename)),
-            "v" => Some(Message::SetMode(Mode::Visual)),
-            "/" => Some(Message::SetMode(Mode::Filter)),
-            ":" => Some(Message::SetMode(Mode::Command)),
-            "." => Some(Message::ToggleHidden),
-            _ => None,
-        },
-        (Key::Named(Named::ArrowDown), _) => Some(Message::SelectDelta(1)),
-        (Key::Named(Named::ArrowUp), _) => Some(Message::SelectDelta(-1)),
-        (Key::Named(Named::Enter), _) => Some(Message::InputSubmit),
-        (Key::Named(Named::Escape), _) => Some(Message::SetMode(Mode::Normal)),
-        (Key::Named(Named::Backspace), Modifiers::NONE) => Some(Message::NavigateUp),
-        // Alt+Arrow for history
-        (Key::Named(Named::ArrowLeft), m) if m.alt() => Some(Message::NavigateBack),
-        (Key::Named(Named::ArrowRight), m) if m.alt() => Some(Message::NavigateForward),
-        _ => None,
-    }
-}
-```
+---
 
-## Yazi Feature Alignment
-
-| Yazi Feature | Heike Status | iced Implementation |
-|--------------|--------------|---------------------|
-| Miller columns | ✅ | `pane_grid` with 3 panes |
-| Vim keybindings (hjkl, gg/G) | ✅ | `keyboard::on_key_press` subscription |
-| Visual selection | ✅ | `Mode::Visual` + `HashSet<PathBuf>` |
-| Yank/Cut/Paste | ✅ | `Clipboard` struct, `Task` for I/O |
-| Fuzzy filter `/` | ✅ | `text_input` + filter in `update()` |
-| Command mode `:` | ✅ | Parse commands in `InputSubmit` |
-| Hidden files `.` | ✅ | Toggle + `Task::perform(reload)` |
-| Image preview | ✅ | `iced::widget::image` |
-| Syntax highlight | ✅ | `iced::highlighter` or syntect |
-| History back/fwd | ✅ | `Vec<PathBuf>` + index |
-| File watcher | ✅ | `Subscription::channel` + notify |
-| Bulk rename | ❌ TODO | Modal + batch `Task` |
-| Tabs | ❌ TODO | `iced_aw::Tabs` |
-| Bookmarks `g` prefix | ❌ TODO | `HashMap<char, PathBuf>` |
-| Trash bin | ❌ TODO | `trash` crate |
-| Archive extract | ❌ TODO | `Task::perform` with zip/tar |
-| Git status | ❌ TODO | `gix` crate indicators |
-
-## File Structure
+## File Structure Target
 
 ```
 src/
-├── main.rs           # Entry point, iced::application
-├── app.rs            # Heike struct, update(), view()
-├── message.rs        # Message enum
-├── model/
+├── main.rs
+├── app.rs
+├── entry.rs
+├── input.rs
+├── style.rs
+├── state/
 │   ├── mod.rs
-│   ├── entry.rs      # FileEntry
-│   ├── mode.rs       # Mode enum
-│   └── clipboard.rs  # Clipboard state
-├── view/
-│   ├── mod.rs
-│   ├── parent.rs     # Parent pane
-│   ├── current.rs    # Current directory list
-│   ├── preview.rs    # Preview pane
-│   └── modals.rs     # Command/rename/confirm dialogs
+│   ├── mode.rs
+│   ├── clipboard.rs
+│   └── search.rs
 ├── io/
 │   ├── mod.rs
-│   ├── directory.rs  # read_directory()
-│   ├── search.rs     # Content search
-│   └── ops.rs        # Copy/move/delete
-├── subscription/
-│   ├── mod.rs
-│   ├── keyboard.rs   # Key handling
-│   └── watcher.rs    # File system watcher
-└── style/
+│   ├── directory.rs
+│   ├── search.rs
+│   ├── watcher.rs
+│   └── worker.rs
+└── view/
     ├── mod.rs
-    └── theme.rs      # Light/dark themes
+    ├── panels.rs
+    ├── preview.rs
+    ├── modals.rs
+    └── table.rs
 ```
 
-## Migration Steps
+---
 
-1. **Scaffold** - Create `Message` enum and empty `update()`/`view()`
-2. **Navigation** - Implement directory loading with `Task`
-3. **Keyboard** - Add `Subscription` for vim bindings
-4. **List rendering** - Use `scrollable` + `column` or `iced_aw::Grid`
-5. **Preview** - Port preview renderers (image, syntax, hex)
-6. **File ops** - Implement clipboard with async `Task`
-7. **Search** - Async search with progress via `Subscription::channel`
-8. **Polish** - Theming, icons, modals
+## Quick Reference: Layout Constants
 
-## Key Differences to Embrace
+```rust
+// src/style.rs
+pub const ICON_SIZE: f32 = 14.0;
+pub const ICON_COL_WIDTH: f32 = 30.0;
+pub const ROW_HEIGHT: f32 = 24.0;
+pub const DIVIDER_WIDTH: f32 = 4.0;
+pub const PARENT_BOUNDS: (f32, f32) = (100.0, 400.0);
+pub const PREVIEW_BOUNDS: (f32, f32) = (150.0, 500.0);
+pub const MODAL_WIDTH_RATIO: f32 = 0.6;
+pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
+pub const DOUBLE_PRESS_MS: u64 = 500;
+pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024;
+pub const ARCHIVE_PREVIEW_ITEMS: usize = 100;
+pub const MESSAGE_TIMEOUT_SECS: u64 = 5;
+```
 
-| egui Pattern | iced Equivalent |
-|--------------|-----------------|
-| `ctx.input(key_pressed)` | `keyboard::on_key_press` subscription |
-| `RefCell<Option<Action>>` | Return `Message` from view, handle in update |
-| `ui.spinner()` | Conditional `text("Loading...")` + store loading state |
-| `egui::Window::show()` | `iced_aw::Modal` or overlay in view |
-| `TableBuilder` | `scrollable(column![...])` or custom widget |
-| Immediate `fs::read` | `Task::perform(async_read, Message::Result)` |
+---
 
-## Notes
+## Dependencies to Add
 
-- **No tables built-in**: Use `iced_aw::Grid` or manual `Row`/`Column`
-- **Context menus**: Use `iced_aw::ContextMenu`
-- **Drag-drop**: Native support via `iced::event::Event::File`
-- **Icons**: Embed Nerd Font as before, use `text()` with font family
-- **State in subscription closures**: Pass owned/cloned data, not references
+```toml
+# Cargo.toml additions
+trash = "5.0"           # Trash bin support
+serde = { version = "1.0", features = ["derive"] }  # Settings
+toml = "0.8"            # Settings file format
+gix = "0.68"            # Git status (optional, heavy)
+```
