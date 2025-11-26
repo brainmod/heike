@@ -5,9 +5,18 @@
 
 ## **Project Status: Active Prototype**
 
-**Current Version:** 0.7.3 (The "Hotkey Fixes" Update)
+**Current Version:** 0.7.4 (The "Stability Patch" Update)
 
-### **Recent Updates** (2025-11-27)
+### **Recent Updates** (2025-11-28)
+
+#### **Stability & Safety Improvements**
+* ✅ **Async Directory Guard:** Ensures directory results only apply when they match the current path to prevent race conditions
+* ✅ **Filter Selection Restore:** Keeping your selection intact after exiting filter mode returns you to the file you were working with
+* ✅ **Clipboard Validation:** Paste operations now skip missing sources and clean up stale clipboard entries automatically
+* ✅ **History Integrity Check:** Back/forward navigation skips deleted directories and removes them from history
+* ✅ **Large File Protection:** Previews gracefully refuse files over 10MB to avoid costly reads
+
+### **Previous Updates** (2025-11-27)
 
 #### **Hotkey & Navigation Improvements**
 * ✅ **Fixed Shift+S Search Hotkey:** Content search now properly triggered with Shift+S in all modes
