@@ -5,9 +5,21 @@
 
 ## **Project Status: Active Prototype**
 
-**Current Version:** 0.7.4 (The "Stability Patch" Update)
+**Current Version:** 0.8.0 (The "Selection & Navigation" Update)
 
-### **Recent Updates** (2025-11-28)
+### **Recent Updates** (2025-11-29)
+
+#### **Navigation & Selection Improvements**
+* ✅ **Refined Navigation Keys:** Right arrow/l now only enters directories (use Enter to open files)
+* ✅ **Yazi-Inspired Selection:** Added Space (toggle), Shift+V (select all), Ctrl+A (select all) keybindings
+* ✅ **Subtle Visual Scheme:** Parent/preview panes now use text color instead of background highlighting
+* ✅ **Directory Color Coding:** Directories appear in subtle blue to distinguish from files
+* ✅ **Search Results Scroll:** Search results now auto-scroll to keep selected match visible
+* ✅ **Enhanced Preview Pane:** Preview can now expand up to 800px width (from 500px)
+* ✅ **Improved File Detection:** Better binary file detection and expanded syntax highlighting support
+* ✅ **Config File Support:** Hidden config files now properly previewed as text
+
+### **Previous Updates** (2025-11-28)
 
 #### **Stability & Safety Improvements**
 * ✅ **Async Directory Guard:** Ensures directory results only apply when they match the current path to prevent race conditions
@@ -96,9 +108,13 @@
 * **Vim-style Keybindings:**
   * `j`/`k` or Arrow Keys: Navigate up/down
   * `h`/Left Arrow or Backspace: Go to parent directory
-  * `l`/Right Arrow or Enter: Enter directory / Open file
+  * `l`/Right Arrow: Enter directory
+  * `Enter`: Open file / Enter directory
   * `gg` / `G`: Jump to top / bottom
   * `v`: Visual selection mode for multi-select
+  * `Shift+V`: Visual select all
+  * `Ctrl+A`: Select all
+  * `Space`: Toggle selection of current item
   * `/`: Fuzzy filter mode
   * `:`: Command mode
   * `Shift+S`: Content search

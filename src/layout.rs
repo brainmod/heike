@@ -14,7 +14,7 @@ pub const PARENT_MIN: f32 = 100.0;
 pub const PARENT_MAX: f32 = 400.0;
 pub const PARENT_DEFAULT: f32 = 200.0;
 pub const PREVIEW_MIN: f32 = 150.0;
-pub const PREVIEW_MAX: f32 = 500.0;
+pub const PREVIEW_MAX: f32 = 800.0;
 pub const PREVIEW_DEFAULT: f32 = 350.0;
 
 // --- Modals ---
@@ -25,13 +25,13 @@ pub const MODAL_HEIGHT_RATIO: f32 = 0.8;
 
 // --- Timing ---
 pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
-pub const DOUBLE_PRESS_MS: u64 = 500;  // for gg
+pub const DOUBLE_PRESS_MS: u64 = 500; // for gg
 
 // --- Preview limits ---
 pub const HEX_PREVIEW_BYTES: usize = 512;
-pub const TEXT_PREVIEW_LIMIT: usize = 100_000;  // chars
+pub const TEXT_PREVIEW_LIMIT: usize = 100_000; // chars
 pub const ARCHIVE_PREVIEW_ITEMS: usize = 100;
-pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024;  // 10MB
+pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 // --- Helper functions ---
 
