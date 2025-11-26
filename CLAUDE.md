@@ -17,7 +17,7 @@
 - [x] **Strip-based layout** — Replace SidePanel approach with `egui_extras::Strip` to eliminate black gap
 - [x] **Manual resize dividers** — Add draggable dividers between panes
 - [x] **Column clipping** — Add `.clip(true)` to all `Column::remainder()` calls
-- [ ] **Truncated labels** — Add `truncated_label()` helper with ellipsis overflow
+- [x] **Truncated labels** — Add `truncated_label()` helper with ellipsis overflow
 - [x] **ScrollArea constraints** — Add `max_height(ui.available_height())` to all ScrollAreas
 - [x] **Image preview sizing** — Add `maintain_aspect_ratio(true)` and height constraint
 - [x] **Responsive modals** — Scale modal width/height to screen size
@@ -48,7 +48,7 @@
 
 - [ ] **Trash bin support** — Add `trash` crate, replace `fs::remove_file`
 - [ ] **Sort options** — Name/Size/Modified/Extension, Asc/Desc, dirs-first toggle
-- [ ] **Symlink indication** — Check `fs::symlink_metadata`, show indicator
+- [x] **Symlink indication** — Check `fs::symlink_metadata`, show indicator
 - [ ] **File permissions display** — Unix `rwxr-xr-x` format in preview
 - [ ] **Status line info** — Selected size, item count, git branch, disk space
 - [ ] **Bulk rename** — vidir-style multi-file rename mode

@@ -5,9 +5,15 @@
 
 ## **Project Status: Active Prototype**
 
-**Current Version:** 0.8.0 (The "Selection & Navigation" Update)
+**Current Version:** 0.8.1 (The "Visual Polish" Update)
 
-### **Recent Updates** (2025-11-29)
+### **Recent Updates** (2025-11-30)
+
+#### **Visual Polish & Clarity**
+* ✅ **Truncated Labels:** Long names now gracefully show an ellipsis before they overflow, keeping columns tidy everywhere
+* ✅ **Symlink Indicators:** Symbolic links display an arrow glyph across panes so they stand out from regular files at a glance
+
+### **Previous Updates** (2025-11-29)
 
 #### **Navigation & Selection Improvements**
 * ✅ **Refined Navigation Keys:** Right arrow/l now only enters directories (use Enter to open files)
@@ -194,6 +200,7 @@
 * **File Type Icons:** Nerd Font glyphs for professional icon rendering (50+ file types supported)
 * **Bundled Font:** JetBrainsMono Nerd Font included - no external dependencies
 * **Extensible Icon System:** Easy to customize icon mappings
+* **Symlink Indicators:** Symbolic links show an arrow glyph so you can spot them instantly
 * **Visual Feedback:** Cut files dimmed, multi-selected files highlighted
 * **Drag & Drop Overlay:** Visual indicator when dragging files over the window
 

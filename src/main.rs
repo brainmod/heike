@@ -40,6 +40,7 @@ struct FileEntry {
     path: PathBuf,
     name: String,
     is_dir: bool,
+    is_symlink: bool,
     size: u64,
     modified: SystemTime,
     extension: String,
@@ -47,19 +48,33 @@ struct FileEntry {
 
 impl FileEntry {
     fn from_path(path: PathBuf) -> Option<Self> {
-        let metadata = fs::metadata(&path).ok()?;
+        // Use symlink_metadata to detect symlinks without following them
+        let symlink_meta = fs::symlink_metadata(&path).ok()?;
+        let is_symlink = symlink_meta.is_symlink();
+
         let name = path.file_name()?.to_string_lossy().to_string();
         let extension = path
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
 
+        // Prefer real metadata (follows symlinks) but fall back to the link metadata
+        let metadata = fs::metadata(&path).ok();
+        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified = metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .or_else(|| symlink_meta.modified().ok())
+            .unwrap_or(SystemTime::now());
+
         Some(Self {
             path,
             name,
-            is_dir: metadata.is_dir(),
-            size: metadata.len(),
-            modified: metadata.modified().unwrap_or(SystemTime::now()),
+            is_dir,
+            is_symlink,
+            size,
+            modified,
             extension,
         })
     }
@@ -108,6 +123,14 @@ impl FileEntry {
             "log" => "\u{f18d}",
             "git" | "gitignore" => "\u{e725}",
             _ => "\u{f15b}",
+        }
+    }
+
+    fn display_name(&self) -> String {
+        if self.is_symlink {
+            format!("{} \u{2192}", self.name)
+        } else {
+            self.name.clone()
         }
     }
 }
@@ -2227,9 +2250,10 @@ impl Heike {
                             });
                             row.col(|ui| {
                                 let text_color = if is_active { accent } else { default_color };
-                                let response = ui.selectable_label(
-                                    false,
-                                    egui::RichText::new(&entry.name).color(text_color),
+                                let response = layout::truncated_label_with_sense(
+                                    ui,
+                                    egui::RichText::new(entry.display_name()).color(text_color),
+                                    egui::Sense::click(),
                                 );
                                 if response.clicked() {
                                     // Navigate to the clicked directory in the parent pane
@@ -2306,7 +2330,7 @@ impl Heike {
 
                             // Name column with context menu
                             row.col(|ui| {
-                                let mut text = egui::RichText::new(&entry.name);
+                                let mut text = egui::RichText::new(entry.display_name());
                                 if is_multi_selected {
                                     text = text.color(egui::Color32::LIGHT_BLUE);
                                 } else if is_cut {
@@ -2319,7 +2343,11 @@ impl Heike {
                                     // Keep default text color for files
                                 }
 
-                                let response = ui.selectable_label(is_focused, text);
+                                let response = layout::truncated_label_with_sense(
+                                    ui,
+                                    text,
+                                    egui::Sense::click(),
+                                );
 
                                 // Single click for selection only
                                 if response.clicked() {
@@ -2484,9 +2512,15 @@ impl Heike {
             None => return,
         };
 
-        ui.heading(format!("{} {}", entry.get_icon(), entry.name));
+        layout::truncated_label(
+            ui,
+            egui::RichText::new(format!("{} {}", entry.get_icon(), entry.display_name())).heading(),
+        );
         ui.add_space(5.0);
-        ui.label(format!("Size: {}", bytesize::ByteSize(entry.size)));
+        layout::truncated_label(
+            ui,
+            format!("Size: {}", bytesize::ByteSize(entry.size)),
+        );
         let datetime: DateTime<Local> = entry.modified.into();
         ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
         ui.separator();
@@ -2537,10 +2571,11 @@ impl Heike {
                                             );
                                         });
                                         row.col(|ui| {
-                                            let response = ui.selectable_label(
-                                                false,
-                                                egui::RichText::new(&preview_entry.name)
+                                            let response = layout::truncated_label_with_sense(
+                                                ui,
+                                                egui::RichText::new(preview_entry.display_name())
                                                     .color(text_color),
+                                                egui::Sense::click(),
                                             );
                                             if response.clicked() {
                                                 // Navigate to the directory being previewed (the currently selected item)
@@ -2777,14 +2812,14 @@ impl eframe::App for Heike {
             Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
         }
 
-        // Auto-dismiss old messages (after 5 seconds)
+        // Auto-dismiss old messages
         if let Some((_, time)) = &self.error_message {
-            if time.elapsed() > Duration::from_secs(5) {
+            if time.elapsed() > Duration::from_secs(layout::MESSAGE_TIMEOUT_SECS) {
                 self.error_message = None;
             }
         }
         if let Some((_, time)) = &self.info_message {
-            if time.elapsed() > Duration::from_secs(5) {
+            if time.elapsed() > Duration::from_secs(layout::MESSAGE_TIMEOUT_SECS) {
                 self.info_message = None;
             }
         }
