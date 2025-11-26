@@ -1,0 +1,45 @@
+// Layout constants for Heike file manager
+
+use eframe::egui;
+
+// --- Sizing ---
+pub const ICON_SIZE: f32 = 14.0;
+pub const ICON_COL_WIDTH: f32 = 30.0;
+pub const ROW_HEIGHT: f32 = 24.0;
+pub const HEADER_HEIGHT: f32 = 20.0;
+pub const DIVIDER_WIDTH: f32 = 4.0;
+
+// --- Panel constraints ---
+pub const PARENT_MIN: f32 = 100.0;
+pub const PARENT_MAX: f32 = 400.0;
+pub const PARENT_DEFAULT: f32 = 200.0;
+pub const PREVIEW_MIN: f32 = 150.0;
+pub const PREVIEW_MAX: f32 = 500.0;
+pub const PREVIEW_DEFAULT: f32 = 350.0;
+
+// --- Modals ---
+pub const MODAL_MIN_WIDTH: f32 = 300.0;
+pub const MODAL_MAX_WIDTH: f32 = 500.0;
+pub const MODAL_WIDTH_RATIO: f32 = 0.6;
+pub const MODAL_HEIGHT_RATIO: f32 = 0.8;
+
+// --- Timing ---
+pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
+pub const DOUBLE_PRESS_MS: u64 = 500;  // for gg
+
+// --- Preview limits ---
+pub const HEX_PREVIEW_BYTES: usize = 512;
+pub const TEXT_PREVIEW_LIMIT: usize = 100_000;  // chars
+pub const ARCHIVE_PREVIEW_ITEMS: usize = 100;
+
+// --- Helper functions ---
+
+/// Calculate responsive modal width based on screen size
+pub fn modal_width(ctx: &egui::Context) -> f32 {
+    (ctx.screen_rect().width() * MODAL_WIDTH_RATIO).clamp(MODAL_MIN_WIDTH, MODAL_MAX_WIDTH)
+}
+
+/// Calculate maximum modal height based on screen size
+pub fn modal_max_height(ctx: &egui::Context) -> f32 {
+    ctx.screen_rect().height() * MODAL_HEIGHT_RATIO
+}

@@ -5,9 +5,20 @@
 
 ## **Project Status: Active Prototype**
 
-**Current Version:** 0.7.0 (The "Search" Update)
+**Current Version:** 0.7.1 (The "UX Refinement" Update)
 
-### **Recent Updates** (2025-11-23)
+### **Recent Updates** (2025-11-25)
+
+#### **UX & Performance Improvements**
+* ✅ **Layout Stability:** Fixed text overflow clipping in all tables to prevent content from forcing panel expansion
+* ✅ **ScrollArea Constraints:** Applied proper constraints to all scroll areas to prevent content overflow
+* ✅ **Image Preview Sizing:** Improved image preview with proper aspect ratio and responsive sizing
+* ✅ **Responsive Modals:** Modal dialogs now scale appropriately on different screen sizes
+* ✅ **Auto-Dismiss Messages:** Error and info messages automatically disappear after 5 seconds
+* ✅ **Selection Validation:** Added bounds checking to prevent crashes when navigating filtered results
+* ✅ **Layout Constants:** Created centralized layout configuration module for consistency
+
+### **Previous Updates** (2025-11-23)
 
 #### **Content Search Integration**
 * ✅ **Ripgrep-all Style Search:** Added full content search with Shift+S keybinding
