@@ -40,6 +40,7 @@ struct FileEntry {
     path: PathBuf,
     name: String,
     is_dir: bool,
+    is_symlink: bool,
     size: u64,
     modified: SystemTime,
     extension: String,
@@ -47,19 +48,33 @@ struct FileEntry {
 
 impl FileEntry {
     fn from_path(path: PathBuf) -> Option<Self> {
-        let metadata = fs::metadata(&path).ok()?;
+        // Use symlink_metadata to detect symlinks without following them
+        let symlink_meta = fs::symlink_metadata(&path).ok()?;
+        let is_symlink = symlink_meta.is_symlink();
+
         let name = path.file_name()?.to_string_lossy().to_string();
         let extension = path
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
 
+        // Prefer real metadata (follows symlinks) but fall back to the link metadata
+        let metadata = fs::metadata(&path).ok();
+        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let modified = metadata
+            .as_ref()
+            .and_then(|m| m.modified().ok())
+            .or_else(|| symlink_meta.modified().ok())
+            .unwrap_or(SystemTime::now());
+
         Some(Self {
             path,
             name,
-            is_dir: metadata.is_dir(),
-            size: metadata.len(),
-            modified: metadata.modified().unwrap_or(SystemTime::now()),
+            is_dir,
+            is_symlink,
+            size,
+            modified,
             extension,
         })
     }
@@ -108,6 +123,14 @@ impl FileEntry {
             "log" => "\u{f18d}",
             "git" | "gitignore" => "\u{e725}",
             _ => "\u{f15b}",
+        }
+    }
+
+    fn display_name(&self) -> String {
+        if self.is_symlink {
+            format!("{} \u{2192}", self.name)
+        } else {
+            self.name.clone()
         }
     }
 }
@@ -1244,20 +1267,57 @@ impl Heike {
             "mkdir" => {
                 if parts.len() > 1 {
                     let new_dir = self.current_path.join(parts[1]);
-                    if let Err(e) = fs::create_dir(&new_dir) {
-                        self.error_message = Some((format!("mkdir failed: {}", e), Instant::now()));
-                    } else {
-                        self.request_refresh();
+                    // Security: Canonicalize paths and verify they're within current directory
+                    match (new_dir.canonicalize().or_else(|_| {
+                        // If path doesn't exist yet, canonicalize parent and append last component
+                        if let Some(parent) = new_dir.parent() {
+                            parent.canonicalize().map(|p| {
+                                if let Some(name) = new_dir.file_name() {
+                                    p.join(name)
+                                } else {
+                                    p
+                                }
+                            })
+                        } else {
+                            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Invalid path"))
+                        }
+                    }), self.current_path.canonicalize()) {
+                        (Ok(target), Ok(current)) => {
+                            if target.starts_with(&current) {
+                                if let Err(e) = fs::create_dir(&new_dir) {
+                                    self.error_message = Some((format!("mkdir failed: {}", e), Instant::now()));
+                                } else {
+                                    self.request_refresh();
+                                }
+                            } else {
+                                self.error_message = Some(("Path traversal not allowed".into(), Instant::now()));
+                            }
+                        }
+                        _ => {
+                            self.error_message = Some(("Invalid path".into(), Instant::now()));
+                        }
                     }
                 }
             }
             "touch" => {
                 if parts.len() > 1 {
                     let new_file = self.current_path.join(parts[1]);
-                    if let Err(e) = fs::File::create(&new_file) {
-                        self.error_message = Some((format!("touch failed: {}", e), Instant::now()));
-                    } else {
-                        self.request_refresh();
+                    // Security: Canonicalize paths and verify they're within current directory
+                    match (new_file.parent().and_then(|p| p.canonicalize().ok()), self.current_path.canonicalize()) {
+                        (Some(parent), Ok(current)) => {
+                            if parent.starts_with(&current) {
+                                if let Err(e) = fs::File::create(&new_file) {
+                                    self.error_message = Some((format!("touch failed: {}", e), Instant::now()));
+                                } else {
+                                    self.request_refresh();
+                                }
+                            } else {
+                                self.error_message = Some(("Path traversal not allowed".into(), Instant::now()));
+                            }
+                        }
+                        _ => {
+                            self.error_message = Some(("Invalid path".into(), Instant::now()));
+                        }
                     }
                 }
             }
@@ -2227,9 +2287,10 @@ impl Heike {
                             });
                             row.col(|ui| {
                                 let text_color = if is_active { accent } else { default_color };
-                                let response = ui.selectable_label(
-                                    false,
-                                    egui::RichText::new(&entry.name).color(text_color),
+                                let response = layout::truncated_label_with_sense(
+                                    ui,
+                                    egui::RichText::new(entry.display_name()).color(text_color),
+                                    egui::Sense::click(),
                                 );
                                 if response.clicked() {
                                     // Navigate to the clicked directory in the parent pane
@@ -2306,7 +2367,7 @@ impl Heike {
 
                             // Name column with context menu
                             row.col(|ui| {
-                                let mut text = egui::RichText::new(&entry.name);
+                                let mut text = egui::RichText::new(entry.display_name());
                                 if is_multi_selected {
                                     text = text.color(egui::Color32::LIGHT_BLUE);
                                 } else if is_cut {
@@ -2319,7 +2380,11 @@ impl Heike {
                                     // Keep default text color for files
                                 }
 
-                                let response = ui.selectable_label(is_focused, text);
+                                let response = layout::truncated_label_with_sense(
+                                    ui,
+                                    text,
+                                    egui::Sense::click(),
+                                );
 
                                 // Single click for selection only
                                 if response.clicked() {
@@ -2484,9 +2549,15 @@ impl Heike {
             None => return,
         };
 
-        ui.heading(format!("{} {}", entry.get_icon(), entry.name));
+        layout::truncated_label(
+            ui,
+            egui::RichText::new(format!("{} {}", entry.get_icon(), entry.display_name())).heading(),
+        );
         ui.add_space(5.0);
-        ui.label(format!("Size: {}", bytesize::ByteSize(entry.size)));
+        layout::truncated_label(
+            ui,
+            format!("Size: {}", bytesize::ByteSize(entry.size)),
+        );
         let datetime: DateTime<Local> = entry.modified.into();
         ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
         ui.separator();
@@ -2537,10 +2608,11 @@ impl Heike {
                                             );
                                         });
                                         row.col(|ui| {
-                                            let response = ui.selectable_label(
-                                                false,
-                                                egui::RichText::new(&preview_entry.name)
+                                            let response = layout::truncated_label_with_sense(
+                                                ui,
+                                                egui::RichText::new(preview_entry.display_name())
                                                     .color(text_color),
+                                                egui::Sense::click(),
                                             );
                                             if response.clicked() {
                                                 // Navigate to the directory being previewed (the currently selected item)
@@ -2777,14 +2849,14 @@ impl eframe::App for Heike {
             Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
         }
 
-        // Auto-dismiss old messages (after 5 seconds)
+        // Auto-dismiss old messages
         if let Some((_, time)) = &self.error_message {
-            if time.elapsed() > Duration::from_secs(5) {
+            if time.elapsed() > Duration::from_secs(layout::MESSAGE_TIMEOUT_SECS) {
                 self.error_message = None;
             }
         }
         if let Some((_, time)) = &self.info_message {
-            if time.elapsed() > Duration::from_secs(5) {
+            if time.elapsed() > Duration::from_secs(layout::MESSAGE_TIMEOUT_SECS) {
                 self.info_message = None;
             }
         }
@@ -2920,11 +2992,30 @@ impl eframe::App for Heike {
 
         egui::TopBottomPanel::bottom("bottom_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                // Item counts
                 ui.label(format!(
                     "{}/{} items",
                     self.visible_entries.len(),
                     self.all_entries.len()
                 ));
+                
+                // Show current selected file info
+                if let Some(idx) = self.selected_index {
+                    if let Some(entry) = self.visible_entries.get(idx) {
+                        ui.separator();
+                        let type_str = if entry.is_dir { "dir" } else { "file" };
+                        ui.label(format!(
+                            "{}: {}",
+                            type_str,
+                            bytesize::ByteSize(entry.size)
+                        ));
+                    }
+                }
+                
+                // Show current path
+                ui.separator();
+                layout::truncated_label(ui, format!("{}", self.current_path.display()));
+
                 if self.is_loading {
                     ui.spinner();
                 }
@@ -2938,9 +3029,17 @@ impl eframe::App for Heike {
 
                 if !self.multi_selection.is_empty() {
                     ui.separator();
+                    // Calculate total size of selected files
+                    let total_size: u64 = self.all_entries.iter()
+                        .filter(|e| self.multi_selection.contains(&e.path))
+                        .map(|e| e.size)
+                        .sum();
                     ui.colored_label(
                         egui::Color32::LIGHT_BLUE,
-                        format!("{} selected", self.multi_selection.len()),
+                        format!("{} selected ({})", 
+                            self.multi_selection.len(),
+                            bytesize::ByteSize(total_size)
+                        ),
                     );
                 }
             });

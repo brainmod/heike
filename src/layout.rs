@@ -26,6 +26,7 @@ pub const MODAL_HEIGHT_RATIO: f32 = 0.8;
 // --- Timing ---
 pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
 pub const DOUBLE_PRESS_MS: u64 = 500; // for gg
+pub const MESSAGE_TIMEOUT_SECS: u64 = 5;
 
 // --- Preview limits ---
 pub const HEX_PREVIEW_BYTES: usize = 512;
@@ -37,10 +38,27 @@ pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 /// Calculate responsive modal width based on screen size
 pub fn modal_width(ctx: &egui::Context) -> f32 {
-    (ctx.screen_rect().width() * MODAL_WIDTH_RATIO).clamp(MODAL_MIN_WIDTH, MODAL_MAX_WIDTH)
+    (ctx.input(|i| i.screen_rect().width()) * MODAL_WIDTH_RATIO).clamp(MODAL_MIN_WIDTH, MODAL_MAX_WIDTH)
 }
 
 /// Calculate maximum modal height based on screen size
 pub fn modal_max_height(ctx: &egui::Context) -> f32 {
-    ctx.screen_rect().height() * MODAL_HEIGHT_RATIO
+    ctx.input(|i| i.screen_rect().height()) * MODAL_HEIGHT_RATIO
+}
+
+/// Render a label that truncates overflowing text with an ellipsis.
+pub fn truncated_label(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    ui.add(egui::Label::new(text).truncate())
+}
+
+/// Render a label that truncates overflowing text with an ellipsis and uses the provided sense.
+pub fn truncated_label_with_sense(
+    ui: &mut egui::Ui,
+    text: impl Into<egui::WidgetText>,
+    sense: egui::Sense,
+) -> egui::Response {
+    ui.add(egui::Label::new(text).truncate().sense(sense))
 }
