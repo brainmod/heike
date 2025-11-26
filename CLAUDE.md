@@ -309,6 +309,41 @@ fn is_likely_binary(path: &Path) -> bool {
 }
 ```
 
+### 8. UTF-8 String Truncation
+
+**ALWAYS truncate strings at char boundaries, not byte positions:**
+
+```rust
+// ✅ CORRECT - Safe char boundary truncation
+let preview = if text.chars().count() > 60 {
+    let truncated: String = text.chars().take(60).collect();
+    format!("{}...", truncated)
+} else {
+    text.clone()
+};
+
+// ❌ WRONG - Can panic on multi-byte UTF-8
+let preview = if text.len() > 60 {
+    format!("{}...", &text[..60])  // PANIC if byte 60 is inside a char!
+} else {
+    text.clone()
+};
+
+// Alternative: Use char_indices for byte-aware truncation
+fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+
+    // Find last valid char boundary before max_bytes
+    let mut idx = max_bytes;
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &s[..idx]
+}
+```
+
 ---
 
 ## Development Workflows
@@ -743,6 +778,9 @@ When creating pull requests:
 - [x] **Arrow keys mirror h/l navigation** — Bind Left/Right arrows to parent/enter actions
 - [x] **Search results navigation scroll** — Add scroll_to_row for search results table
 - [x] **Binary file detection false positives** — Improved is_likely_binary to check null byte percentage
+- [x] **Search results auto-scroll alignment** — Changed from Center to None to match main view behavior
+- [x] **Search results not clickable** — Added click handlers to search result rows
+- [x] **UTF-8 byte boundary panic in search** — Fixed preview truncation to use char boundaries instead of byte slicing
 
 ## High: Layout Fixes
 

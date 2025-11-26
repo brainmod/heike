@@ -1773,6 +1773,9 @@ impl eframe::App for Heike {
             selected_index,
         } = self.mode
         {
+            // Track click selection
+            let next_result_selection = std::cell::RefCell::new(None);
+
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -1802,9 +1805,9 @@ impl eframe::App for Heike {
                                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                                     .column(Column::remainder().clip(true));
 
+                                // Match main view scroll behavior - use None instead of Center
                                 if !results.is_empty() && selected_index < results.len() {
-                                    table = table
-                                        .scroll_to_row(selected_index, Some(egui::Align::Center));
+                                    table = table.scroll_to_row(selected_index, None);
                                 }
 
                                 table.body(|body| {
@@ -1830,19 +1833,39 @@ impl eframe::App for Heike {
                                                 } else {
                                                     egui::RichText::new(&file_label)
                                                 };
-                                                ui.label(text);
 
-                                                // Show line content preview (truncated)
-                                                let preview = if result.line_content.len() > 60 {
-                                                    format!("{}...", &result.line_content[..60])
+                                                // Make the label clickable
+                                                let label_response = style::truncated_label_with_sense(
+                                                    ui,
+                                                    text,
+                                                    egui::Sense::click(),
+                                                );
+
+                                                if label_response.clicked() {
+                                                    *next_result_selection.borrow_mut() = Some(row_index);
+                                                }
+
+                                                // Show line content preview (truncated safely at char boundaries)
+                                                let preview = if result.line_content.chars().count() > 60 {
+                                                    let truncated: String = result.line_content
+                                                        .chars()
+                                                        .take(60)
+                                                        .collect();
+                                                    format!("{}...", truncated)
                                                 } else {
                                                     result.line_content.clone()
                                                 };
-                                                ui.label(
+                                                let preview_response = style::truncated_label_with_sense(
+                                                    ui,
                                                     egui::RichText::new(preview)
                                                         .size(10.0)
                                                         .color(egui::Color32::GRAY),
+                                                    egui::Sense::click(),
                                                 );
+
+                                                if preview_response.clicked() {
+                                                    *next_result_selection.borrow_mut() = Some(row_index);
+                                                }
                                             });
                                         });
                                     });
@@ -1893,6 +1916,22 @@ impl eframe::App for Heike {
                     });
                 });
             });
+
+            // Apply deferred selection from click
+            if let Some(new_index) = next_result_selection.into_inner() {
+                if let AppMode::SearchResults {
+                    ref query,
+                    ref results,
+                    selected_index: _,
+                } = self.mode
+                {
+                    self.mode = AppMode::SearchResults {
+                        query: query.clone(),
+                        results: results.clone(),
+                        selected_index: new_index,
+                    };
+                }
+            }
         } else {
             // Normal file browser view
             // Visual feedback for drag and drop
