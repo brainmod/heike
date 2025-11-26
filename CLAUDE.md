@@ -1,4 +1,736 @@
-# Heike: Development Task List
+# Heike: AI Assistant Development Guide
+
+## Project Overview
+
+**Heike** is a GUI file manager built with Rust and egui, inspired by the terminal file manager Yazi. Named after the *Heikegani* (平家蟹), a Japanese crab with a shell pattern resembling a samurai face, Heike combines the speed and keyboard-centric efficiency of a TUI with rich media capabilities of a modern GUI.
+
+**Current Version:** 0.8.1 (The "Visual Polish" Update)
+**Status:** Active Prototype
+**Repository:** https://github.com/brainmod/heike
+
+---
+
+## Architecture Overview
+
+### Current Structure
+
+```
+heike/
+├── src/
+│   ├── main.rs         # Monolithic application (3474 lines)
+│   └── layout.rs       # Layout constants and helpers
+├── assets/
+│   ├── heike_icon.png
+│   └── JetBrainsMonoNerdFont-Regular.ttf
+├── examples/
+│   └── convert_icon.rs # Icon conversion utility
+├── Cargo.toml          # Dependencies and metadata
+├── README.md           # User-facing documentation
+├── CLAUDE.md           # This file (AI assistant guide)
+└── FIXES.md            # Detailed fix recommendations
+```
+
+### Target Structure (Future Refactor)
+
+```
+src/
+├── main.rs
+├── app.rs              # Heike struct, update loop
+├── entry.rs            # FileEntry struct and impl
+├── input.rs            # Keyboard handling
+├── style.rs            # Theme, layout constants
+├── state/
+│   ├── mod.rs
+│   ├── mode.rs         # AppMode enum
+│   ├── clipboard.rs    # Clipboard operations
+│   └── search.rs       # Search state and results
+├── io/
+│   ├── mod.rs
+│   ├── directory.rs    # Directory reading
+│   ├── search.rs       # Content search logic
+│   ├── watcher.rs      # File system watching
+│   └── worker.rs       # Async worker thread
+└── view/
+    ├── mod.rs
+    ├── panels.rs       # Miller columns rendering
+    ├── preview.rs      # File preview logic
+    ├── modals.rs       # Dialogs and popups
+    └── table.rs        # Table rendering helpers
+```
+
+---
+
+## Key Components
+
+### Core Data Structures (src/main.rs)
+
+#### `Heike` struct (~line 645)
+The main application state container. Key fields:
+
+```rust
+struct Heike {
+    // --- Navigation State ---
+    current_path: PathBuf,
+    parent_entries: Vec<FileEntry>,
+    entries: Vec<FileEntry>,
+    visible_entries: Vec<FileEntry>,
+    selected_index: Option<usize>,
+    selected_in_parent: Option<usize>,
+
+    // --- History & Navigation ---
+    history: Vec<PathBuf>,
+    history_index: Option<usize>,
+    last_selected: HashMap<PathBuf, String>,
+
+    // --- UI State ---
+    mode: AppMode,
+    filter_query: String,
+    command_input: String,
+    theme: Theme,
+    show_hidden: bool,
+
+    // --- Layout State ---
+    panel_widths: [f32; 2],  // [parent, preview]
+    dragging_divider: Option<usize>,
+
+    // --- Clipboard & Operations ---
+    clipboard: Vec<FileEntry>,
+    clipboard_op: ClipboardOp,
+    visual_mode_anchor: Option<usize>,
+
+    // --- Search State ---
+    search_query: String,
+    search_results: Vec<SearchResult>,
+    search_selected_index: Option<usize>,
+    search_options: SearchOptions,
+    is_searching: bool,
+
+    // --- Async I/O ---
+    io_sender: Sender<IoCommand>,
+    io_receiver: Receiver<IoResult>,
+    loading: bool,
+    pending_path: Option<PathBuf>,
+
+    // --- Syntax Highlighting ---
+    syntax_set: SyntaxSet,
+    theme_set: ThemeSet,
+
+    // --- Messages & Feedback ---
+    error_message: Option<(String, Instant)>,
+    info_message: Option<(String, Instant)>,
+}
+```
+
+#### `FileEntry` struct (~line 39)
+Represents a file or directory with metadata:
+
+```rust
+struct FileEntry {
+    path: PathBuf,
+    name: String,
+    is_dir: bool,
+    is_symlink: bool,
+    size: u64,
+    modified: SystemTime,
+    extension: String,
+}
+```
+
+**Key methods:**
+- `from_path(PathBuf) -> Option<Self>` - Safe construction from path
+- `get_icon() -> &str` - Returns Nerd Font icon glyph
+- `display_name() -> String` - Adds arrow indicator for symlinks
+
+#### `AppMode` enum (~line 176)
+Application modal state machine:
+
+```rust
+enum AppMode {
+    Normal,
+    Filter,
+    Visual,
+    Command,
+    ShowingHelp,
+    Rename(String),          // Original name
+    ConfirmDelete,
+    Search,
+    SearchResults,
+}
+```
+
+#### `IoCommand` and `IoResult` enums (~line 200, 210)
+Async communication with worker thread:
+
+```rust
+enum IoCommand {
+    LoadDirectory { path: PathBuf, show_hidden: bool },
+    Search { path: PathBuf, options: SearchOptions },
+}
+
+enum IoResult {
+    DirectoryLoaded { path: PathBuf, entries: Vec<FileEntry> },
+    DirectoryError { path: PathBuf, error: String },
+    SearchComplete { results: Vec<SearchResult> },
+}
+```
+
+---
+
+## Critical Code Conventions
+
+### 1. Async Directory Loading Pattern
+
+**ALWAYS verify path matches before applying results:**
+
+```rust
+// ✅ CORRECT
+if let Ok(result) = self.io_receiver.try_recv() {
+    match result {
+        IoResult::DirectoryLoaded { path, entries } => {
+            // Race condition guard!
+            if path == self.current_path {
+                self.entries = entries;
+                self.apply_filter();
+                self.loading = false;
+            }
+        }
+    }
+}
+
+// ❌ WRONG - Can apply stale results
+if let Ok(result) = self.io_receiver.try_recv() {
+    match result {
+        IoResult::DirectoryLoaded { path, entries } => {
+            self.entries = entries;  // Path not verified!
+        }
+    }
+}
+```
+
+### 2. Selection Validation
+
+**ALWAYS validate selection bounds after operations that modify entries:**
+
+```rust
+fn validate_selection(&mut self) {
+    if let Some(idx) = self.selected_index {
+        if self.visible_entries.is_empty() {
+            self.selected_index = None;
+        } else if idx >= self.visible_entries.len() {
+            self.selected_index = Some(self.visible_entries.len() - 1);
+        }
+    }
+}
+
+// Call after: filter, delete, paste, directory load, etc.
+```
+
+### 3. Layout Constants
+
+**ALWAYS use constants from `src/layout.rs`:**
+
+```rust
+use layout::*;
+
+// ✅ CORRECT
+let icon_size = ICON_SIZE;
+let max_preview = MAX_PREVIEW_SIZE;
+
+// ❌ WRONG
+let icon_size = 14.0;  // Magic number!
+```
+
+### 4. Clipboard Validation
+
+**ALWAYS validate paths exist before operations:**
+
+```rust
+// ✅ CORRECT - Clean stale entries
+self.clipboard.retain(|entry| entry.path.exists());
+if self.clipboard.is_empty() {
+    self.info_message = Some(("Clipboard is empty".into(), Instant::now()));
+    return;
+}
+
+// ❌ WRONG - Don't assume paths still exist
+for entry in &self.clipboard {
+    fs::copy(&entry.path, &dest)?;  // May fail!
+}
+```
+
+### 5. Message Auto-Dismiss
+
+**ALWAYS set timestamp for messages:**
+
+```rust
+// ✅ CORRECT
+self.error_message = Some((format!("Error: {}", err), Instant::now()));
+self.info_message = Some(("File copied".into(), Instant::now()));
+
+// In update() loop:
+if let Some((_, time)) = &self.error_message {
+    if time.elapsed() > Duration::from_secs(MESSAGE_TIMEOUT_SECS) {
+        self.error_message = None;
+    }
+}
+```
+
+### 6. Preview Size Guards
+
+**ALWAYS check file size before preview:**
+
+```rust
+// ✅ CORRECT
+if entry.size > MAX_PREVIEW_SIZE {
+    ui.label(format!("File too large ({}) - skipping preview",
+                    bytesize::ByteSize(entry.size)));
+    return;
+}
+
+// ❌ WRONG - Can freeze UI on large files
+let content = fs::read_to_string(&entry.path)?;
+```
+
+### 7. Binary Detection
+
+**ALWAYS check for binary content before text operations:**
+
+```rust
+fn is_likely_binary(path: &Path) -> bool {
+    let mut buf = [0u8; 8192];
+    if let Ok(mut f) = fs::File::open(path) {
+        if let Ok(n) = std::io::Read::read(&mut f, &mut buf) {
+            let null_bytes = buf[..n].iter().filter(|&&b| b == 0).count();
+            // More than 1% null bytes = binary
+            return null_bytes > n / 100;
+        }
+    }
+    false
+}
+```
+
+---
+
+## Development Workflows
+
+### Adding a New Feature
+
+1. **Read existing code first** - Never propose changes without understanding current implementation
+2. **Check CLAUDE.md task list** - See if feature is already planned
+3. **Use TodoWrite tool** - Track multi-step features
+4. **Follow existing patterns** - Match code style and architecture
+5. **Validate edge cases** - Empty dirs, missing files, large files, symlinks
+6. **Update documentation** - Modify README.md and this file if needed
+7. **Test thoroughly** - See "Testing Scenarios" section
+
+### Fixing a Bug
+
+1. **Reproduce the issue** - Understand the bug before coding
+2. **Identify root cause** - Use Grep/Read tools to find relevant code
+3. **Check for similar patterns** - Bug may exist elsewhere
+4. **Write the fix** - Follow conventions in this document
+5. **Validate the fix** - Test edge cases
+6. **Update task list** - Mark bug as fixed in CLAUDE.md
+7. **Update version changelog** - Add to README.md if significant
+
+### Refactoring Code
+
+1. **Don't refactor unsolicited** - Only refactor when explicitly asked
+2. **Keep scope minimal** - Don't "improve" surrounding code
+3. **Don't add features** - Refactor ≠ enhancement
+4. **Don't add comments** - Unless logic is genuinely complex
+5. **Don't abstract prematurely** - Three similar lines < premature abstraction
+6. **Delete unused code completely** - No `_unused` or `// removed` comments
+
+---
+
+## AI Assistant Guidelines
+
+### What to Do ✅
+
+- **Read files before editing** - ALWAYS use Read tool first
+- **Use specialized tools** - Read/Edit/Write, not bash cat/sed
+- **Validate assumptions** - Check paths exist, bounds are valid
+- **Track complex tasks** - Use TodoWrite for multi-step features
+- **Follow conventions** - Match existing code style exactly
+- **Test edge cases** - Empty, missing, large, binary, symlinks
+- **Update docs** - Keep README and CLAUDE.md synchronized
+- **Use layout constants** - Import from `layout.rs`
+- **Handle errors gracefully** - Show user-friendly messages
+- **Preserve state** - Don't lose selection, clipboard, history
+
+### What NOT to Do ❌
+
+- **Don't over-engineer** - Keep solutions simple and focused
+- **Don't add unrequested features** - Only do what's asked
+- **Don't add unnecessary error handling** - Trust internal code
+- **Don't add backwards compatibility hacks** - Delete unused code
+- **Don't guess parameters** - Ask user if unclear
+- **Don't use placeholders** - Get real values before proceeding
+- **Don't skip validation** - Always check bounds, existence, size
+- **Don't assume paths exist** - Especially for clipboard/history
+- **Don't read binary files as text** - Check with `is_likely_binary`
+- **Don't create files unnecessarily** - Prefer editing existing files
+
+### Code Quality Standards
+
+- **Security:** Check for command injection, XSS, path traversal
+- **Performance:** Don't block UI thread, use worker for I/O
+- **Reliability:** Validate all external input and async results
+- **Maintainability:** Follow existing patterns, avoid magic numbers
+- **Simplicity:** Minimum complexity for current requirements
+
+---
+
+## Common Code Patterns
+
+### Pattern: Loading a Directory
+
+```rust
+fn navigate_to(&mut self, path: PathBuf) {
+    if !path.is_dir() {
+        self.error_message = Some(("Not a directory".into(), Instant::now()));
+        return;
+    }
+
+    self.current_path = path.clone();
+    self.loading = true;
+    self.pending_path = Some(path.clone());
+
+    let _ = self.io_sender.send(IoCommand::LoadDirectory {
+        path,
+        show_hidden: self.show_hidden,
+    });
+}
+```
+
+### Pattern: Rendering a Table
+
+```rust
+use egui_extras::{TableBuilder, Column};
+
+TableBuilder::new(ui)
+    .striped(true)
+    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+    .column(Column::exact(ICON_COL_WIDTH))
+    .column(Column::remainder().clip(true))  // IMPORTANT: .clip(true)!
+    .column(Column::initial(80.0).resizable(true))
+    .header(HEADER_HEIGHT, |mut header| {
+        header.col(|ui| { ui.label(""); });
+        header.col(|ui| { ui.label("Name"); });
+        header.col(|ui| { ui.label("Size"); });
+    })
+    .body(|body| {
+        body.rows(ROW_HEIGHT, entries.len(), |mut row| {
+            let entry = &entries[row.index()];
+
+            row.col(|ui| {
+                ui.label(egui::RichText::new(entry.get_icon())
+                    .size(ICON_SIZE));
+            });
+
+            row.col(|ui| {
+                truncated_label(ui, entry.display_name());
+            });
+
+            row.col(|ui| {
+                ui.label(bytesize::ByteSize(entry.size).to_string());
+            });
+        });
+    });
+```
+
+### Pattern: Modal Dialog
+
+```rust
+if self.mode == AppMode::ShowingHelp {
+    egui::Window::new("Help")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .default_width(modal_width(ctx))
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(modal_max_height(ctx))
+                .show(ui, |ui| {
+                    // Content
+                });
+
+            if ui.button("Close").clicked() || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.mode = AppMode::Normal;
+            }
+        });
+}
+```
+
+### Pattern: Keyboard Input Handling
+
+```rust
+fn handle_input(&mut self, ctx: &egui::Context) {
+    // Check mode first
+    match self.mode {
+        AppMode::Normal => self.handle_normal_mode(ctx),
+        AppMode::Filter => self.handle_filter_mode(ctx),
+        AppMode::Visual => self.handle_visual_mode(ctx),
+        AppMode::Command => self.handle_command_mode(ctx),
+        _ => {}
+    }
+}
+
+fn handle_normal_mode(&mut self, ctx: &egui::Context) {
+    ctx.input(|i| {
+        // Single key presses
+        if i.key_pressed(egui::Key::J) || i.key_pressed(egui::Key::ArrowDown) {
+            self.move_selection(1);
+        }
+
+        // Modifier keys
+        if i.modifiers.shift && i.key_pressed(egui::Key::S) {
+            self.mode = AppMode::Search;
+        }
+
+        // Don't forget to consume the key!
+        // (egui handles this automatically for key_pressed)
+    });
+}
+```
+
+---
+
+## Task Management System
+
+### Current Task Priorities
+
+See the full task list at the end of this document. Key priorities:
+
+**🔴 Critical: Code Organization** (Top Priority)
+- Split monolithic `main.rs` into modules
+- Create `app.rs`, `entry.rs`, `state/`, `io/`, `view/`
+- Extract layout constants to `style.rs`
+- Group Heike fields into logical state structs
+
+**🟡 Medium: Performance**
+- Incremental watcher updates (diff fs events)
+- Virtual scrolling for code preview
+- Preview caching by path + mtime
+- Lazy archive preview
+
+**🟡 Medium: UX Features**
+- Trash bin support (using `trash` crate)
+- Sort options (name/size/modified/extension)
+- File permissions display (Unix format)
+- Bulk rename (vidir-style)
+- Bookmarks (`g` prefix shortcuts)
+- Tabs (multiple directories)
+
+**🟢 Low: Additional Features**
+- Settings persistence (TOML)
+- CLI path argument
+- zoxide integration
+- Git status indicators
+- Custom opener rules
+
+### Yazi Feature Parity Tracker
+
+| Feature | Status |
+|---------|--------|
+| Async I/O | ✅ Done |
+| Miller columns | ✅ Done |
+| Vim keybindings | ✅ Done |
+| Visual mode | ✅ Done |
+| Filter `/` | ✅ Done |
+| Command `:` | ✅ Done |
+| Image preview | ✅ Done |
+| Syntax highlighting | ✅ Done |
+| Archive preview | ✅ Done |
+| Content search | ✅ Done |
+| Tabs | ❌ Todo |
+| Bulk rename | ❌ Todo |
+| Trash bin | ❌ Todo |
+| Bookmarks | ❌ Todo |
+| Git status | ❌ Todo |
+| Task manager | ❌ Todo |
+| Plugin system | ❌ Todo |
+
+---
+
+## Testing Scenarios
+
+### Must Test After Layout Changes
+
+1. **Maximize window** with long filename selected → no black gap
+2. **Resize window** rapidly → panels stay proportional
+3. **Long filename** (>100 chars) → text clips with ellipsis, no overflow
+4. **Deep directory path** (>10 levels) → breadcrumbs scroll horizontally
+5. **Small window** (<800px wide) → modals fit, panels respect minimums
+6. **Drag dividers** → smooth resize, respects min/max bounds
+
+### Must Test After File Operation Changes
+
+1. **Delete file** → selection moves to next/previous item
+2. **Copy/paste** → original files preserved, new files created
+3. **Cut/paste** → files moved, originals removed
+4. **Rename** → selection stays on renamed item
+5. **Create directory** → new dir appears and is selected
+6. **Stale clipboard** (deleted source files) → paste shows error, skips missing
+
+### Must Test After Navigation Changes
+
+1. **Back/forward** → returns to correct directory and selection
+2. **History with deleted dirs** → skips missing, shows error
+3. **Filter mode** → exit filter restores previous selection
+4. **Parent click** → navigates to parent, remembers child selection
+5. **Preview click** (dir) → navigates into directory
+
+### Must Test After Search Changes
+
+1. **Content search** → finds matches in text/pdf/zip files
+2. **Search results navigation** (n/N) → cycles through matches correctly
+3. **Enter on search result** → opens file (future: at line number)
+4. **Empty search query** → shows error
+5. **Search with no results** → shows appropriate message
+6. **Case sensitivity toggle** → affects results correctly
+
+---
+
+## Layout Constants Reference
+
+All layout constants are defined in `src/layout.rs`:
+
+```rust
+// Sizing
+pub const ICON_SIZE: f32 = 14.0;
+pub const ICON_COL_WIDTH: f32 = 30.0;
+pub const ROW_HEIGHT: f32 = 24.0;
+pub const HEADER_HEIGHT: f32 = 20.0;
+pub const DIVIDER_WIDTH: f32 = 4.0;
+
+// Panel constraints
+pub const PARENT_MIN: f32 = 100.0;
+pub const PARENT_MAX: f32 = 400.0;
+pub const PARENT_DEFAULT: f32 = 200.0;
+pub const PREVIEW_MIN: f32 = 150.0;
+pub const PREVIEW_MAX: f32 = 800.0;
+pub const PREVIEW_DEFAULT: f32 = 350.0;
+
+// Modals
+pub const MODAL_MIN_WIDTH: f32 = 300.0;
+pub const MODAL_MAX_WIDTH: f32 = 500.0;
+pub const MODAL_WIDTH_RATIO: f32 = 0.6;
+pub const MODAL_HEIGHT_RATIO: f32 = 0.8;
+
+// Timing
+pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
+pub const DOUBLE_PRESS_MS: u64 = 500;
+pub const MESSAGE_TIMEOUT_SECS: u64 = 5;
+
+// Preview limits
+pub const HEX_PREVIEW_BYTES: usize = 512;
+pub const TEXT_PREVIEW_LIMIT: usize = 100_000;
+pub const ARCHIVE_PREVIEW_ITEMS: usize = 100;
+pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+
+// Helper functions
+pub fn modal_width(ctx: &egui::Context) -> f32;
+pub fn modal_max_height(ctx: &egui::Context) -> f32;
+pub fn truncated_label(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response;
+```
+
+---
+
+## Dependencies Guide
+
+### Core Dependencies
+
+```toml
+# GUI Framework
+eframe = "0.33.2"                              # Main GUI framework
+egui_extras = { version = "0.33.2", features = ["all_loaders"] }
+
+# System Integration
+open = "5.3"                                   # Open files with system default
+directories = "5.0"                            # Find standard directories
+notify = "7.0"                                 # File system watching
+
+# Utilities
+chrono = "0.4"                                 # Timestamps
+bytesize = "1.3"                              # Human-readable file sizes
+image = "0.25"                                # Image loading
+
+# Preview & Syntax
+syntect = "5.2"                               # Syntax highlighting
+pulldown-cmark = "0.12"                       # Markdown rendering
+
+# Archive Support
+zip = "2.2"                                   # ZIP archives
+tar = "0.4"                                   # TAR archives
+flate2 = "1.0"                               # Gzip compression
+
+# Document Support
+lopdf = "0.34"                                # PDF reading
+calamine = "0.32"                             # Excel (XLS/XLSX)
+docx-rs = "0.4"                              # Word (DOCX)
+id3 = "1.14"                                 # Audio metadata
+
+# Search
+grep-searcher = "0.1"                         # Text searching
+grep-regex = "0.1"                           # Regex matching
+grep-matcher = "0.1"                         # Matcher interface
+ignore = "0.4"                               # Gitignore-aware walking
+rayon = "1.10"                               # Parallel operations
+```
+
+### Planned Dependencies
+
+```toml
+# For future features (not yet added)
+trash = "5.0"                                 # Trash bin support
+serde = { version = "1.0", features = ["derive"] }  # Settings
+toml = "0.8"                                  # Settings file format
+gix = "0.68"                                  # Git status (optional, heavy)
+```
+
+---
+
+## Git Workflow
+
+### Branch Strategy
+
+- **Main branch:** `main` (production-ready)
+- **Feature branches:** `feat/description` or `claude/session-id`
+- **Bug fix branches:** `fix/description`
+- **Chore branches:** `chore/description`
+
+### Commit Message Format
+
+Follow existing patterns from git log:
+
+```
+feat(component): brief description
+
+- Detailed change 1
+- Detailed change 2
+- Detailed change 3
+```
+
+**Examples:**
+- `feat(ui): truncate labels, symlink indicators, status bar polish`
+- `fix(core): harden async loading and selection retention`
+- `chore(docs): update README with latest features`
+
+### PR Guidelines
+
+When creating pull requests:
+
+1. **Write descriptive PR title** - Same format as commits
+2. **Summarize changes** - 1-3 bullet points
+3. **Include test plan** - How to verify the changes
+4. **Reference issues** - Link related issues/tasks
+5. **Update docs** - README.md, CLAUDE.md if needed
+
+---
+
+## Complete Task List
 
 ## Critical: Bugs
 
@@ -12,7 +744,7 @@
 - [x] **Search results navigation scroll** — Add scroll_to_row for search results table
 - [x] **Binary file detection false positives** — Improved is_likely_binary to check null byte percentage
 
-## High: Layout Fixes (see FIXES.md)
+## High: Layout Fixes
 
 - [x] **Strip-based layout** — Replace SidePanel approach with `egui_extras::Strip` to eliminate black gap
 - [x] **Manual resize dividers** — Add draggable dividers between panes
@@ -91,86 +823,48 @@
 
 ---
 
-## Yazi Feature Parity
+## Quick Command Reference
 
-| Feature | Status |
-|---------|--------|
-| Async I/O | ✅ |
-| Miller columns | ✅ |
-| Vim keybindings | ✅ |
-| Visual mode | ✅ |
-| Filter `/` | ✅ |
-| Command `:` | ✅ |
-| Image preview | ✅ |
-| Syntax highlighting | ✅ |
-| Archive preview | ✅ |
-| Content search | ✅ |
-| Tabs | ❌ |
-| Bulk rename | ❌ |
-| Trash bin | ❌ |
-| Bookmarks | ❌ |
-| Git status | ❌ |
-| Task manager | ❌ |
-| Plugin system | ❌ |
+### Vim-style Navigation
+- `j`/`k` or ↑/↓ — Navigate up/down
+- `h` or ← or Backspace — Go to parent directory
+- `l` or → — Enter directory
+- `Enter` — Open file / Enter directory
+- `gg` / `G` — Jump to top / bottom
+- `Alt+←` / `Alt+→` — Back / Forward in history
 
----
+### Selection & Operations
+- `v` — Visual selection mode
+- `Shift+V` — Select all
+- `Ctrl+A` — Select all
+- `Space` — Toggle selection
+- `y` — Yank (copy) selected files
+- `x` — Cut selected files
+- `p` — Paste clipboard contents
+- `d` — Delete with confirmation
+- `r` — Rename selected file
 
-## File Structure Target
+### Modes & Search
+- `/` — Fuzzy filter mode
+- `:` — Command mode (`:q`, `:mkdir`, `:touch`)
+- `Shift+S` — Content search
+- `Esc` — Return to normal mode
+- `.` — Toggle hidden files
 
-```
-src/
-├── main.rs
-├── app.rs
-├── entry.rs
-├── input.rs
-├── style.rs
-├── state/
-│   ├── mod.rs
-│   ├── mode.rs
-│   ├── clipboard.rs
-│   └── search.rs
-├── io/
-│   ├── mod.rs
-│   ├── directory.rs
-│   ├── search.rs
-│   ├── watcher.rs
-│   └── worker.rs
-└── view/
-    ├── mod.rs
-    ├── panels.rs
-    ├── preview.rs
-    ├── modals.rs
-    └── table.rs
-```
+### Other
+- `?` — Show help
+- Mouse: Click to select, double-click to open, right-click for context menu
 
 ---
 
-## Quick Reference: Layout Constants
+## Additional Resources
 
-```rust
-// src/style.rs
-pub const ICON_SIZE: f32 = 14.0;
-pub const ICON_COL_WIDTH: f32 = 30.0;
-pub const ROW_HEIGHT: f32 = 24.0;
-pub const DIVIDER_WIDTH: f32 = 4.0;
-pub const PARENT_BOUNDS: (f32, f32) = (100.0, 400.0);
-pub const PREVIEW_BOUNDS: (f32, f32) = (150.0, 800.0);
-pub const MODAL_WIDTH_RATIO: f32 = 0.6;
-pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
-pub const DOUBLE_PRESS_MS: u64 = 500;
-pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024;
-pub const ARCHIVE_PREVIEW_ITEMS: usize = 100;
-pub const MESSAGE_TIMEOUT_SECS: u64 = 5;
-```
+- **README.md** — User-facing documentation and feature list
+- **FIXES.md** — Detailed technical fixes and migration guide
+- **Cargo.toml** — Full dependency list with versions
+- **GitHub Issues** — Bug reports and feature requests
 
 ---
 
-## Dependencies to Add
-
-```toml
-# Cargo.toml additions
-trash = "5.0"           # Trash bin support
-serde = { version = "1.0", features = ["derive"] }  # Settings
-toml = "0.8"            # Settings file format
-gix = "0.68"            # Git status (optional, heavy)
-```
+*Last updated: 2025-11-26*
+*For questions or clarifications, refer to git commit history or ask the repository maintainer.*
