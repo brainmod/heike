@@ -1,6 +1,10 @@
-// Layout constants for Heike file manager
-
 use eframe::egui;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Theme {
+    Light,
+    Dark,
+}
 
 // --- Sizing ---
 pub const ICON_SIZE: f32 = 14.0;
@@ -25,28 +29,37 @@ pub const MODAL_HEIGHT_RATIO: f32 = 0.8;
 
 // --- Timing ---
 pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
-pub const DOUBLE_PRESS_MS: u64 = 500; // for gg
+pub const DOUBLE_PRESS_MS: u64 = 500;
 pub const MESSAGE_TIMEOUT_SECS: u64 = 5;
 
 // --- Preview limits ---
 pub const HEX_PREVIEW_BYTES: usize = 512;
-pub const TEXT_PREVIEW_LIMIT: usize = 100_000; // chars
+pub const TEXT_PREVIEW_LIMIT: usize = 100_000;
 pub const ARCHIVE_PREVIEW_ITEMS: usize = 100;
-pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024;
 
 // --- Helper functions ---
 
-/// Calculate responsive modal width based on screen size
 pub fn modal_width(ctx: &egui::Context) -> f32 {
-    (ctx.input(|i| i.screen_rect().width()) * MODAL_WIDTH_RATIO).clamp(MODAL_MIN_WIDTH, MODAL_MAX_WIDTH)
+    let width = ctx.input(|i| {
+        i.viewport()
+            .inner_rect
+            .map(|r| r.width())
+            .unwrap_or(800.0)
+    });
+    (width * MODAL_WIDTH_RATIO).clamp(MODAL_MIN_WIDTH, MODAL_MAX_WIDTH)
 }
 
-/// Calculate maximum modal height based on screen size
 pub fn modal_max_height(ctx: &egui::Context) -> f32 {
-    ctx.input(|i| i.screen_rect().height()) * MODAL_HEIGHT_RATIO
+    let height = ctx.input(|i| {
+        i.viewport()
+            .inner_rect
+            .map(|r| r.height())
+            .unwrap_or(600.0)
+    });
+    height * MODAL_HEIGHT_RATIO
 }
 
-/// Render a label that truncates overflowing text with an ellipsis.
 pub fn truncated_label(
     ui: &mut egui::Ui,
     text: impl Into<egui::WidgetText>,
@@ -54,7 +67,6 @@ pub fn truncated_label(
     ui.add(egui::Label::new(text).truncate())
 }
 
-/// Render a label that truncates overflowing text with an ellipsis and uses the provided sense.
 pub fn truncated_label_with_sense(
     ui: &mut egui::Ui,
     text: impl Into<egui::WidgetText>,
