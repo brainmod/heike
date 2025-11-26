@@ -31,6 +31,7 @@ pub const DOUBLE_PRESS_MS: u64 = 500;  // for gg
 pub const HEX_PREVIEW_BYTES: usize = 512;
 pub const TEXT_PREVIEW_LIMIT: usize = 100_000;  // chars
 pub const ARCHIVE_PREVIEW_ITEMS: usize = 100;
+pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024;  // 10MB
 
 // --- Helper functions ---
 

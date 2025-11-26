@@ -2,11 +2,11 @@
 
 ## Critical: Bugs
 
-- [ ] **Race condition in async loading** — Verify `current_path` matches result path before applying `DirectoryLoaded`
-- [ ] **Selection lost after filter clear** — Restore selection to previously selected item when exiting filter mode
-- [ ] **Clipboard paths can go stale** — Validate source paths exist before paste operation
-- [ ] **History contains deleted directories** — Validate directory exists on back/forward navigation
-- [ ] **File size limits on preview** — Add `MAX_PREVIEW_SIZE` check before `fs::read_to_string`
+- [x] **Race condition in async loading** — Verify `current_path` matches result path before applying `DirectoryLoaded`
+- [x] **Selection lost after filter clear** — Restore selection to previously selected item when exiting filter mode
+- [x] **Clipboard paths can go stale** — Validate source paths exist before paste operation
+- [x] **History contains deleted directories** — Validate directory exists on back/forward navigation
+- [x] **File size limits on preview** — Add `MAX_PREVIEW_SIZE` check before `fs::read_to_string`
 - [x] **Shift+S content search hotkey** — Ensure search modal opens from all contexts
 - [x] **Arrow keys mirror h/l navigation** — Bind Left/Right arrows to parent/enter actions
 

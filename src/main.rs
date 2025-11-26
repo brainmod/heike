@@ -155,7 +155,7 @@ enum IoCommand {
 }
 
 enum IoResult {
-    DirectoryLoaded(Vec<FileEntry>),
+    DirectoryLoaded { path: PathBuf, entries: Vec<FileEntry> },
     ParentLoaded(Vec<FileEntry>),
     SearchCompleted(Vec<SearchResult>),
     SearchProgress(usize),
@@ -614,7 +614,7 @@ impl Heike {
                 match cmd {
                     IoCommand::LoadDirectory(path, hidden) => {
                         match read_directory(&path, hidden) {
-                            Ok(entries) => { let _ = res_tx.send(IoResult::DirectoryLoaded(entries)); }
+                            Ok(entries) => { let _ = res_tx.send(IoResult::DirectoryLoaded { path: path.clone(), entries }); }
                             Err(e) => { let _ = res_tx.send(IoResult::Error(e.to_string())); }
                         }
                     }
@@ -692,6 +692,11 @@ impl Heike {
     }
 
     fn apply_filter(&mut self) {
+        // Save currently selected item path before filtering
+        let previously_selected = self.selected_index
+            .and_then(|idx| self.visible_entries.get(idx))
+            .map(|e| e.path.clone());
+
         if self.mode == AppMode::Filtering && !self.command_buffer.is_empty() {
             let query = self.command_buffer.clone();
             self.visible_entries = self.all_entries.iter()
@@ -701,10 +706,19 @@ impl Heike {
         } else {
             self.visible_entries = self.all_entries.clone();
         }
-        if self.visible_entries.is_empty() {
+
+        // Restore selection to previously selected item if possible
+        if let Some(path) = previously_selected {
+            if let Some(idx) = self.visible_entries.iter().position(|e| e.path == path) {
+                self.selected_index = Some(idx);
+            } else if !self.visible_entries.is_empty() {
+                self.selected_index = Some(0);
+            } else {
+                self.selected_index = None;
+            }
+        } else if self.visible_entries.is_empty() {
             self.selected_index = None;
         } else if self.selected_index.is_none() {
-            // Only set to 0 if there's no selection yet
             self.selected_index = Some(0);
         }
         self.validate_selection();
@@ -763,7 +777,11 @@ impl Heike {
     fn process_async_results(&mut self) {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
-                IoResult::DirectoryLoaded(entries) => {
+                IoResult::DirectoryLoaded { path, entries } => {
+                    if path != self.current_path {
+                        continue;
+                    }
+
                     self.all_entries = entries;
                     self.is_loading = false;
                     self.apply_filter();
@@ -842,27 +860,51 @@ impl Heike {
     }
 
     fn navigate_back(&mut self) {
-        if self.history_index > 0 {
-            // Save current selection before navigating back
-            if let Some(idx) = self.selected_index {
-                self.directory_selections.insert(self.current_path.clone(), idx);
-            }
-            self.history_index -= 1;
-            self.current_path = self.history[self.history_index].clone();
-            self.finish_navigation();
+        if self.history_index == 0 { return; }
+
+        if let Some(idx) = self.selected_index {
+            self.directory_selections.insert(self.current_path.clone(), idx);
         }
+
+        let mut idx = self.history_index;
+        while idx > 0 {
+            idx -= 1;
+            let target = self.history[idx].clone();
+            if target.is_dir() {
+                self.history_index = idx;
+                self.current_path = target;
+                self.finish_navigation();
+                return;
+            } else {
+                self.history.remove(idx);
+                self.history_index -= 1;
+            }
+        }
+
+        self.error_message = Some(("Previous directory no longer exists".into(), Instant::now()));
     }
 
     fn navigate_forward(&mut self) {
-        if self.history_index < self.history.len() - 1 {
-            // Save current selection before navigating forward
-            if let Some(idx) = self.selected_index {
-                self.directory_selections.insert(self.current_path.clone(), idx);
-            }
-            self.history_index += 1;
-            self.current_path = self.history[self.history_index].clone();
-            self.finish_navigation();
+        if self.history_index >= self.history.len() - 1 { return; }
+
+        if let Some(idx) = self.selected_index {
+            self.directory_selections.insert(self.current_path.clone(), idx);
         }
+
+        let idx = self.history_index + 1;
+        loop {
+            if idx >= self.history.len() { break; }
+            let target = self.history[idx].clone();
+            if target.is_dir() {
+                self.history_index = idx;
+                self.current_path = target;
+                self.finish_navigation();
+                return;
+            }
+            self.history.remove(idx);
+        }
+
+        self.error_message = Some(("Next directory no longer exists".into(), Instant::now()));
     }
 
     fn finish_navigation(&mut self) {
@@ -900,8 +942,15 @@ impl Heike {
 
         let mut count = 0;
         let mut errors = Vec::new();
+        let mut missing_paths = Vec::new();
 
         for src in &self.clipboard {
+            if !src.exists() {
+                errors.push(format!("Source missing: {}", src.display()));
+                missing_paths.push(src.clone());
+                continue;
+            }
+
             if let Some(name) = src.file_name() {
                 let dest = self.current_path.join(name);
                 if src.is_dir() {
@@ -921,6 +970,8 @@ impl Heike {
                 }
             }
         }
+
+        for path in missing_paths { self.clipboard.remove(&path); }
 
         if !errors.is_empty() { self.error_message = Some((errors.join(" | "), Instant::now())); }
         else { self.info_message = Some((format!("Processed {} files", count), Instant::now())); }
@@ -1251,7 +1302,24 @@ impl Heike {
 
     // --- Preview Helper Functions ---
 
+    fn render_large_file_message(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        ui.centered_and_justified(|ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(20.0);
+                ui.label(egui::RichText::new("📄 File Too Large").size(18.0));
+                ui.add_space(10.0);
+                ui.label(format!("File size: {}", bytesize::ByteSize(entry.size)));
+                ui.label(format!("Preview limit: {}", bytesize::ByteSize(layout::MAX_PREVIEW_SIZE)));
+            });
+        });
+    }
+
     fn render_syntax_highlighted(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        if entry.size > layout::MAX_PREVIEW_SIZE {
+            self.render_large_file_message(ui, entry);
+            return;
+        }
+
         match fs::read_to_string(&entry.path) {
             Ok(content) => {
                 let syntax = self.syntax_set
@@ -1270,7 +1338,6 @@ impl Heike {
                     ui.set_max_width(ui.available_width());
                     let mut highlighter = HighlightLines::new(syntax, theme);
 
-                    // Build a single LayoutJob with all formatted text to avoid per-line layout overhead
                     let mut job = egui::text::LayoutJob::default();
 
                     for line in LinesWithEndings::from(&content) {
@@ -1294,7 +1361,6 @@ impl Heike {
                         }
                     }
 
-                    // Render as a single label with all the formatted text
                     ui.label(job);
                 });
             }
@@ -1305,6 +1371,11 @@ impl Heike {
     }
 
     fn render_markdown_preview(&self, ui: &mut egui::Ui, entry: &FileEntry) {
+        if entry.size > layout::MAX_PREVIEW_SIZE {
+            self.render_large_file_message(ui, entry);
+            return;
+        }
+
         match fs::read_to_string(&entry.path) {
             Ok(content) => {
                 egui::ScrollArea::vertical()
@@ -2085,11 +2156,14 @@ impl Heike {
         ];
 
         if text_extensions.contains(&entry.extension.as_str()) || entry.extension.is_empty() {
-            // Early binary detection to avoid expensive text read attempts
+            if entry.size > layout::MAX_PREVIEW_SIZE {
+                self.render_large_file_message(ui, entry);
+                return;
+            }
+
             if is_likely_binary(&entry.path) {
                 // Fall through to binary file message
             } else {
-                // Try to read as text
                 match fs::read_to_string(&entry.path) {
                     Ok(_) => {
                         self.render_syntax_highlighted(ui, entry);
