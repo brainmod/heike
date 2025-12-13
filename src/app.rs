@@ -177,13 +177,17 @@ impl Heike {
         if let Some(path) = previously_selected {
             if let Some(idx) = self.visible_entries.iter().position(|e| e.path == path) {
                 self.selected_index = Some(idx);
-            } else if !self.visible_entries.is_empty() {
-                self.selected_index = Some(0);
-            } else {
-                self.selected_index = None;
             }
-        } else if self.visible_entries.is_empty() {
+            // If path not found, keep current selection if valid; otherwise default to 0
+        }
+
+        // Validate/fix selection if it's now out of bounds
+        if self.visible_entries.is_empty() {
             self.selected_index = None;
+        } else if let Some(idx) = self.selected_index {
+            if idx >= self.visible_entries.len() {
+                self.selected_index = Some(self.visible_entries.len() - 1);
+            }
         } else if self.selected_index.is_none() {
             self.selected_index = Some(0);
         }

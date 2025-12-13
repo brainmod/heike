@@ -311,7 +311,7 @@ impl Heike {
         if ctx.input(|i| i.key_pressed(egui::Key::P)) {
             self.paste_clipboard();
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::D)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
             self.mode = AppMode::DeleteConfirm;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::R)) {
