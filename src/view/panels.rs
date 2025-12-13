@@ -2,7 +2,6 @@
 // Miller columns layout rendering
 
 use crate::app::Heike;
-use crate::entry::FileEntry;
 use crate::state::{AppMode, ClipboardOp};
 use crate::style;
 use eframe::egui;
