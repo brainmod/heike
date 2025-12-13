@@ -45,10 +45,23 @@ pub struct Heike {
     pub bookmarks: BookmarksConfig,
 }
 impl Heike {
-    pub fn new(ctx: egui::Context, config: crate::config::Config) -> Self {
-        let start_path = directories::UserDirs::new()
-            .map(|ud| ud.home_dir().to_path_buf())
-            .unwrap_or_else(|| env::current_dir().unwrap_or_default());
+    pub fn new(ctx: egui::Context, config: crate::config::Config, cli_start_dir: Option<PathBuf>) -> Self {
+        let start_path = if let Some(dir) = cli_start_dir {
+            // Use CLI-provided directory if valid
+            if dir.is_dir() {
+                dir
+            } else {
+                // Fall back to home dir if CLI path doesn't exist
+                directories::UserDirs::new()
+                    .map(|ud| ud.home_dir().to_path_buf())
+                    .unwrap_or_else(|| env::current_dir().unwrap_or_default())
+            }
+        } else {
+            // Use default logic if no CLI arg provided
+            directories::UserDirs::new()
+                .map(|ud| ud.home_dir().to_path_buf())
+                .unwrap_or_else(|| env::current_dir().unwrap_or_default())
+        };
 
         let (cmd_tx, res_rx) = spawn_worker(ctx.clone());
         let (_watch_tx, watch_rx) = channel();
@@ -294,7 +307,7 @@ impl Heike {
                         query: self.ui.search_query.clone(),
                         results,
                         selected_index: 0,
-                    };
+                    });
                     self.ui.info_message = Some((
                         format!(
                             "Found {} matches in {} files",
@@ -1334,7 +1347,7 @@ impl eframe::App for Heike {
                         query: query.clone(),
                         results: results.clone(),
                         selected_index: new_index,
-                    };
+                    });
                 }
             }
         } else {
