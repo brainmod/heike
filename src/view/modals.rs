@@ -84,7 +84,18 @@ impl Heike {
                             ui.label("Space");
                             ui.label("Toggle Selection");
                             ui.end_row();
+                            ui.label("g + key");
+                            ui.label("Jump to Bookmark");
+                            ui.end_row();
                         });
+                        ui.add_space(10.0);
+                        ui.heading("Available Bookmarks");
+                        ui.separator();
+                        for key in self.bookmarks.keys() {
+                            if let Some(path) = self.bookmarks.resolve_path(&key) {
+                                ui.label(format!("g{} → {}", key, path.display()));
+                            }
+                        }
                         ui.add_space(10.0);
                         if ui.button("Close").clicked() {
                             self.mode = AppMode::Normal;
