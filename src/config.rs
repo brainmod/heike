@@ -87,6 +87,7 @@ impl Default for Config {
         let mut shortcuts = HashMap::new();
         // Add default bookmarks
         shortcuts.insert("h".to_string(), "~".to_string());
+        shortcuts.insert("r".to_string(), "/".to_string());
         shortcuts.insert("d".to_string(), "~/Downloads".to_string());
         shortcuts.insert("p".to_string(), "~/Projects".to_string());
         shortcuts.insert("t".to_string(), "/tmp".to_string());
