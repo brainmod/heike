@@ -7,95 +7,24 @@
 
 **Current Version:** 0.8.1 (The "Visual Polish" Update)
 
-### **Recent Updates** (2025-11-30)
+### **Version History**
 
-#### **Visual Polish & Clarity**
-* ✅ **Truncated Labels:** Long names now gracefully show an ellipsis before they overflow, keeping columns tidy everywhere
-* ✅ **Symlink Indicators:** Symbolic links display an arrow glyph across panes so they stand out from regular files at a glance
-* ✅ **Rich Status Line:** Bottom bar now shows current path, focused item size/type, and total size of multi-selection
+#### v0.8.1 — Visual Polish (2025-11-30)
+* Truncated labels with ellipsis overflow
+* Symlink arrow indicators across all panes
+* Rich status line (path, size, selection info)
 
-### **Previous Updates** (2025-11-29)
+#### v0.8.0 — Stability & UX (2025-11-26 → 2025-11-29)
+* **Layout:** Strip-based layout eliminating black gap bug, resizable dividers, responsive modals
+* **Navigation:** Yazi-inspired selection (Space/Shift+V/Ctrl+A), refined arrow key bindings
+* **Safety:** Async directory guard, clipboard validation, history integrity checks, 10MB preview limit
+* **Search:** Shift+S content search with regex, PDF/ZIP support, gitignore-aware walking
 
-#### **Navigation & Selection Improvements**
-* ✅ **Refined Navigation Keys:** Right arrow/l now only enters directories (use Enter to open files)
-* ✅ **Yazi-Inspired Selection:** Added Space (toggle), Shift+V (select all), Ctrl+A (select all) keybindings
-* ✅ **Subtle Visual Scheme:** Parent/preview panes now use text color instead of background highlighting
-* ✅ **Directory Color Coding:** Directories appear in subtle blue to distinguish from files
-* ✅ **Search Results Scroll:** Search results now auto-scroll to keep selected match visible
-* ✅ **Enhanced Preview Pane:** Preview can now expand up to 800px width (from 500px)
-* ✅ **Improved File Detection:** Better binary file detection and expanded syntax highlighting support
-* ✅ **Config File Support:** Hidden config files now properly previewed as text
-
-### **Previous Updates** (2025-11-28)
-
-#### **Stability & Safety Improvements**
-* ✅ **Async Directory Guard:** Ensures directory results only apply when they match the current path to prevent race conditions
-* ✅ **Filter Selection Restore:** Keeping your selection intact after exiting filter mode returns you to the file you were working with
-* ✅ **Clipboard Validation:** Paste operations now skip missing sources and clean up stale clipboard entries automatically
-* ✅ **History Integrity Check:** Back/forward navigation skips deleted directories and removes them from history
-* ✅ **Large File Protection:** Previews gracefully refuse files over 10MB to avoid costly reads
-
-### **Previous Updates** (2025-11-27)
-
-#### **Hotkey & Navigation Improvements**
-* ✅ **Fixed Shift+S Search Hotkey:** Content search now properly triggered with Shift+S in all modes
-* ✅ **Arrow Key Vim Bindings:** Left/Right arrow keys now work like h/l for parent/child navigation
-* ✅ **Enhanced Search UX:** Press Shift+S in search results mode to modify search parameters
-* ✅ **Updated Help Documentation:** Help modal now reflects all arrow key bindings
-
-### **Previous Updates** (2025-11-26)
-
-#### **Strip-Based Layout Refactor**
-* ✅ **Eliminated Black Gap Bug:** Replaced separate SidePanel approach with egui_extras::Strip for seamless layout
-* ✅ **Synchronized Panel Sizing:** All three panes (parent, current, preview) now use coordinated sizing through Strip
-* ✅ **Resizable Dividers:** Added visual divider bars between panes with drag-to-resize functionality
-* ✅ **Layout State Management:** Centralized panel width tracking for consistent behavior
-* ✅ **Improved Responsiveness:** Layout properly adapts to window maximize/resize without gaps or desyncing
-
-### **Previous Updates** (2025-11-26)
-
-#### **UX & Performance Improvements**
-* ✅ **Layout Stability:** Fixed text overflow clipping in all tables to prevent content from forcing panel expansion
-* ✅ **ScrollArea Constraints:** Applied proper constraints to all scroll areas to prevent content overflow
-* ✅ **Image Preview Sizing:** Improved image preview with proper aspect ratio and responsive sizing
-* ✅ **Responsive Modals:** Modal dialogs now scale appropriately on different screen sizes
-* ✅ **Auto-Dismiss Messages:** Error and info messages automatically disappear after 5 seconds
-* ✅ **Selection Validation:** Added bounds checking to prevent crashes when navigating filtered results
-* ✅ **Layout Constants:** Created centralized layout configuration module for consistency
-* ✅ **Breadcrumb Overflow:** Breadcrumbs now scroll horizontally for deep directory paths
-* ✅ **Binary File Detection:** Early detection of binary files prevents expensive read attempts and improves performance
-
-### **Previous Updates** (2025-11-23)
-
-#### **Content Search Integration**
-* ✅ **Ripgrep-all Style Search:** Added full content search with Shift+S keybinding
-* ✅ **Multi-Format Support:** Search in text files, PDFs, and ZIP archives
-* ✅ **Advanced Options:** Case sensitivity, regex support, hidden files, configurable limits
-* ✅ **Smart File Walking:** Gitignore-aware with the `ignore` crate
-* ✅ **Results Navigation:** Navigate matches with n/N, preview in dedicated pane
-* ✅ **Efficient Search:** Powered by grep-searcher for high performance
-
-### **Previous Updates** (2025-11-22)
-
-#### **Layout & Interaction Improvements**
-* ✅ **Fixed Column Widths:** Set reasonable defaults and disabled auto-resize based on content for more stable layout
-* ✅ **Smart Autoscroll:** Autoscroll now temporarily disables when user manually scrolls via mouse wheel or scroll bar
-* ✅ **Wrapped Navigation:** Arrow keys and hjkl now wrap around at top/bottom of file list
-* ✅ **Double-Click to Open:** Changed file/directory opening to require Enter or double-click (single-click now only selects)
-* ✅ **Arrow Key Bindings:** Arrow keys bound to same actions as hjkl (Up/Down = j/k navigation)
-
-#### **Preview & Display**
-* ✅ **Comprehensive Preview Support:** Native file preview without OS dependencies
-* ✅ **Enhanced Syntax Highlighting:** Professional code highlighting using syntect (50+ languages)
-* ✅ **Markdown Rendering:** Native markdown preview with formatted headings and code blocks
-* ✅ **Archive Preview:** ZIP/TAR/GZ archive content listing
-* ✅ **PDF Support:** PDF metadata and text extraction preview
-* ✅ **Audio Metadata:** ID3 tag reading for MP3 files
-* ✅ **Hex Viewer:** Binary file preview with hex dump display
-* ✅ **Nerd Font Integration:** Icons now use Nerd Font glyphs for crisp, professional rendering
-* ✅ **Icon Display Improvements:** Enhanced icon rendering with consistent sizing (14pt) across all panes
-* ✅ **Navigation Fix:** Fixed pane navigation to work as proper Miller Columns - clicking left/right panes shifts content appropriately
-* ✅ **UX Enhancement:** Improved Miller column navigation to match expected file manager behavior
+#### v0.7.0 — Preview & Icons (2025-11-22 → 2025-11-23)
+* Content search integration (ripgrep-style)
+* Syntax highlighting via syntect (50+ languages)
+* Markdown rendering, archive preview, PDF metadata, hex viewer
+* Nerd Font icons, smart autoscroll, wrapped navigation
 
 ## **Core Features**
 
@@ -147,7 +76,7 @@
 * **Feedback System:** Info and error message toasts in bottom bar
 
 ### **Search & Filtering**
-* **Content Search (NEW):** Press `Shift+S` to search file contents recursively
+* **Content Search:** Press `Shift+S` to search file contents recursively
   * Full ripgrep-like functionality with regex support
   * Search in PDFs, ZIP archives, and text files
   * Gitignore-aware file walking
