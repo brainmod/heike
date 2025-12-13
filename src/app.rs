@@ -1,6 +1,6 @@
 use crate::entry::FileEntry;
 use crate::io::{fuzzy_match, is_likely_binary, read_directory, spawn_worker, IoCommand, IoResult};
-use crate::state::{AppMode, ClipboardOp, SearchOptions};
+use crate::state::{AppMode, ClipboardOp, SearchOptions, SortOptions};
 use crate::style::{self, Theme};
 use crate::view;
 
@@ -36,6 +36,7 @@ pub struct Heike {
     pub search_options: SearchOptions,
     pub search_in_progress: bool,
     pub search_file_count: usize,
+    pub sort_options: SortOptions,
     pub error_message: Option<(String, Instant)>,
     pub info_message: Option<(String, Instant)>,
     pub show_hidden: bool,
@@ -84,6 +85,7 @@ impl Heike {
             search_options: SearchOptions::default(),
             search_in_progress: false,
             search_file_count: 0,
+            sort_options: SortOptions::default(),
             error_message: None,
             info_message: None,
             show_hidden: false,
@@ -108,7 +110,7 @@ impl Heike {
         app
     }
 
-    fn request_refresh(&mut self) {
+    pub(crate) fn request_refresh(&mut self) {
         self.is_loading = true;
         self.error_message = None;
         // Keep info message if it's fresh, or maybe clear it? Let's keep it for feedback.
@@ -126,7 +128,7 @@ impl Heike {
         }
     }
 
-    fn apply_filter(&mut self) {
+    pub(crate) fn apply_filter(&mut self) {
         // Save currently selected item path before filtering
         let previously_selected = self
             .selected_index
@@ -145,6 +147,9 @@ impl Heike {
             self.visible_entries = self.all_entries.clone();
         }
 
+        // Apply sorting
+        self.sort_visible_entries();
+
         // Restore selection to previously selected item if possible
         if let Some(path) = previously_selected {
             if let Some(idx) = self.visible_entries.iter().position(|e| e.path == path) {
@@ -160,6 +165,43 @@ impl Heike {
             self.selected_index = Some(0);
         }
         self.validate_selection();
+    }
+
+    fn sort_visible_entries(&mut self) {
+        use crate::state::{SortBy, SortOrder};
+
+        // Separate directories and files if dirs_first is enabled
+        let (mut dirs, mut files): (Vec<_>, Vec<_>) = self
+            .visible_entries
+            .drain(..)
+            .partition(|e| e.is_dir);
+
+        // Sort both groups by the selected criteria
+        let sort_fn = |a: &FileEntry, b: &FileEntry| -> std::cmp::Ordering {
+            let cmp = match self.sort_options.sort_by {
+                SortBy::Name => a.name.cmp(&b.name),
+                SortBy::Size => a.size.cmp(&b.size),
+                SortBy::Modified => a.modified.cmp(&b.modified),
+                SortBy::Extension => a.extension.cmp(&b.extension),
+            };
+
+            match self.sort_options.sort_order {
+                SortOrder::Ascending => cmp,
+                SortOrder::Descending => cmp.reverse(),
+            }
+        };
+
+        dirs.sort_by(sort_fn);
+        files.sort_by(sort_fn);
+
+        // Combine back, with dirs first if enabled
+        if self.sort_options.dirs_first {
+            self.visible_entries.extend(dirs);
+            self.visible_entries.extend(files);
+        } else {
+            self.visible_entries.extend(files);
+            self.visible_entries.extend(dirs);
+        }
     }
 
     fn setup_watcher(&mut self, ctx: &egui::Context) {
@@ -279,7 +321,7 @@ impl Heike {
 
     // --- Navigation Logic ---
 
-    fn navigate_to(&mut self, path: PathBuf) {
+    pub(crate) fn navigate_to(&mut self, path: PathBuf) {
         if path.is_dir() {
             // Save current selection before navigating away
             if let Some(idx) = self.selected_index {
@@ -301,7 +343,7 @@ impl Heike {
         }
     }
 
-    fn navigate_up(&mut self) {
+    pub(crate) fn navigate_up(&mut self) {
         if let Some(parent) = self.current_path.parent() {
             // Save current selection before navigating up
             if let Some(idx) = self.selected_index {
@@ -312,7 +354,7 @@ impl Heike {
         }
     }
 
-    fn navigate_back(&mut self) {
+    pub(crate) fn navigate_back(&mut self) {
         if self.history_index == 0 {
             return;
         }
@@ -340,7 +382,7 @@ impl Heike {
         self.error_message = Some(("Previous directory no longer exists".into(), Instant::now()));
     }
 
-    fn navigate_forward(&mut self) {
+    pub(crate) fn navigate_forward(&mut self) {
         if self.history_index >= self.history.len() - 1 {
             return;
         }
@@ -383,7 +425,7 @@ impl Heike {
 
     // --- File Operations (Injected) ---
 
-    fn yank_selection(&mut self, op: ClipboardOp) {
+    pub(crate) fn yank_selection(&mut self, op: ClipboardOp) {
         self.clipboard.clear();
         self.clipboard_op = Some(op);
 
@@ -408,7 +450,7 @@ impl Heike {
         ));
     }
 
-    fn paste_clipboard(&mut self) {
+    pub(crate) fn paste_clipboard(&mut self) {
         if self.clipboard.is_empty() {
             return;
         }
@@ -471,7 +513,7 @@ impl Heike {
         self.request_refresh();
     }
 
-    fn perform_delete(&mut self) {
+    pub(crate) fn perform_delete(&mut self) {
         let targets = if !self.multi_selection.is_empty() {
             self.multi_selection.clone()
         } else if let Some(idx) = self.selected_index {
@@ -484,21 +526,32 @@ impl Heike {
             HashSet::new()
         };
 
+        let mut error_count = 0;
         for path in targets {
-            if path.is_dir() {
-                let _ = fs::remove_dir_all(&path);
-            } else {
-                let _ = fs::remove_file(&path);
+            match trash::delete(&path) {
+                Ok(_) => {},
+                Err(e) => {
+                    error_count += 1;
+                    eprintln!("Failed to move to trash: {}", e);
+                }
             }
         }
 
         self.mode = AppMode::Normal;
         self.multi_selection.clear();
         self.request_refresh();
-        self.info_message = Some(("Items deleted".into(), Instant::now()));
+
+        if error_count > 0 {
+            self.error_message = Some((
+                format!("Failed to delete {} item(s)", error_count),
+                Instant::now(),
+            ));
+        } else {
+            self.info_message = Some(("Items moved to trash".into(), Instant::now()));
+        }
     }
 
-    fn perform_rename(&mut self) {
+    pub(crate) fn perform_rename(&mut self) {
         if let Some(idx) = self.selected_index {
             if let Some(entry) = self.visible_entries.get(idx) {
                 let new_name = self.command_buffer.trim();
@@ -532,36 +585,6 @@ impl Heike {
 
     // --- Drag and Drop Handling ---
     // (Currently handled in the eframe::App update method)
-
-    fn render_divider(&mut self, ui: &mut egui::Ui, index: usize) {
-        let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
-
-        let color = if response.hovered() || response.dragged() {
-            ui.visuals().widgets.active.bg_fill
-        } else {
-            egui::Color32::from_gray(60)
-        };
-        ui.painter().rect_filled(response.rect, 0.0, color);
-
-        if response.hovered() || response.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-        }
-
-        if response.dragged() {
-            let delta = response.drag_delta().x;
-            match index {
-                0 => {
-                    self.panel_widths[0] =
-                        (self.panel_widths[0] + delta).clamp(style::PARENT_MIN, style::PARENT_MAX)
-                }
-                1 => {
-                    self.panel_widths[1] = (self.panel_widths[1] - delta)
-                        .clamp(style::PREVIEW_MIN, style::PREVIEW_MAX)
-                }
-                _ => {}
-            }
-        }
-    }
 
     fn render_preview(
         &self,
@@ -876,632 +899,12 @@ impl Heike {
 
     // --- Drag and Drop Handling ---
 
-    fn handle_dropped_files(&mut self, dropped_files: &[egui::DroppedFile]) {
-        let mut count = 0;
-        let mut errors = Vec::new();
-
-        for file in dropped_files {
-            if let Some(path) = &file.path {
-                let dest = self.current_path.join(path.file_name().unwrap_or_default());
-
-                // Copy the dropped file to current directory
-                if path.is_dir() {
-                    errors.push("Copying directories not supported".into());
-                } else {
-                    match fs::copy(path, &dest) {
-                        Ok(_) => count += 1,
-                        Err(e) => errors.push(format!("Copy failed: {}", e)),
-                    }
-                }
-            }
-        }
-
-        if !errors.is_empty() {
-            self.error_message = Some((errors.join(" | "), Instant::now()));
-        } else if count > 0 {
-            self.info_message = Some((format!("Copied {} file(s)", count), Instant::now()));
-        }
-
-        if count > 0 {
-            self.request_refresh();
-        }
-    }
-
-    // --- Input Handling ---
-
-    fn handle_input(&mut self, ctx: &egui::Context) {
-        // 1. Modal Inputs (Command, Filter, Rename, SearchInput)
-        if matches!(
-            self.mode,
-            AppMode::Command | AppMode::Filtering | AppMode::Rename | AppMode::SearchInput
-        ) {
-            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                match self.mode {
-                    AppMode::Rename => self.perform_rename(),
-                    AppMode::Command => self.execute_command(ctx),
-                    AppMode::Filtering => {
-                        // Finalize search and allow navigation in filtered results
-                        self.mode = AppMode::Normal;
-                        // Keep the filtered results
-                    }
-                    AppMode::SearchInput => {
-                        // Start search
-                        if !self.search_query.is_empty() {
-                            self.search_in_progress = true;
-                            self.search_file_count = 0;
-                            let _ = self.command_tx.send(IoCommand::SearchContent {
-                                query: self.search_query.clone(),
-                                root_path: self.current_path.clone(),
-                                options: self.search_options.clone(),
-                            });
-                        }
-                        self.mode = AppMode::Normal;
-                    }
-                    _ => {}
-                }
-            }
-            if self.mode == AppMode::Filtering && !ctx.input(|i| i.pointer.any_pressed()) {
-                // Implicitly handled
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.mode = AppMode::Normal;
-                self.command_buffer.clear();
-                self.apply_filter();
-            }
-            return;
-        }
-
-        // 2. Confirmation Modals
-        if self.mode == AppMode::DeleteConfirm {
-            if ctx.input(|i| i.key_pressed(egui::Key::Y) || i.key_pressed(egui::Key::Enter)) {
-                self.perform_delete();
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::N) || i.key_pressed(egui::Key::Escape)) {
-                self.mode = AppMode::Normal;
-            }
-            return;
-        }
-
-        if self.mode == AppMode::Help {
-            if ctx.input(|i| {
-                i.key_pressed(egui::Key::Escape)
-                    || i.key_pressed(egui::Key::Q)
-                    || i.key_pressed(egui::Key::Questionmark)
-            }) {
-                self.mode = AppMode::Normal;
-            }
-            return;
-        }
-
-        // Handle SearchResults mode navigation
-        if let AppMode::SearchResults {
-            query: ref current_query,
-            ref results,
-            ref mut selected_index,
-        } = self.mode
-        {
-            if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.shift) {
-                self.search_query = current_query.clone();
-                self.search_in_progress = false;
-                self.search_file_count = 0;
-                self.mode = AppMode::SearchInput;
-                self.focus_input = true;
-                return;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                self.mode = AppMode::Normal;
-                return;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::N) && !i.modifiers.shift) {
-                if !results.is_empty() {
-                    *selected_index = (*selected_index + 1) % results.len();
-                }
-                return;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::N) && i.modifiers.shift) {
-                if !results.is_empty() {
-                    *selected_index = if *selected_index == 0 {
-                        results.len() - 1
-                    } else {
-                        *selected_index - 1
-                    };
-                }
-                return;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                // Open the file at the match location
-                if let Some(result) = results.get(*selected_index) {
-                    if result.file_path.is_file() {
-                        let _ = open::that(&result.file_path);
-                    }
-                }
-                return;
-            }
-            // Allow other navigation within search results
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J)) {
-                if !results.is_empty() {
-                    *selected_index = (*selected_index + 1) % results.len();
-                }
-                return;
-            }
-            if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K)) {
-                if !results.is_empty() {
-                    *selected_index = if *selected_index == 0 {
-                        results.len() - 1
-                    } else {
-                        *selected_index - 1
-                    };
-                }
-                return;
-            }
-            return; // Don't process other keys in search results mode
-        }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.mode = AppMode::Normal;
-            self.command_buffer.clear();
-            self.multi_selection.clear();
-            self.apply_filter();
-            return;
-        }
-
-        // 3. Global History keys
-        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowLeft)) {
-            self.navigate_back();
-            return;
-        }
-        if ctx.input(|i| i.modifiers.alt && i.key_pressed(egui::Key::ArrowRight)) {
-            self.navigate_forward();
-            return;
-        }
-
-        // 4. Normal Mode Triggers
-        if ctx.input(|i| i.key_pressed(egui::Key::Colon)) {
-            self.mode = AppMode::Command;
-            self.focus_input = true;
-            self.command_buffer.clear();
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Slash)) {
-            self.mode = AppMode::Filtering;
-            self.focus_input = true;
-            self.command_buffer.clear();
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Period)) {
-            self.show_hidden = !self.show_hidden;
-            self.request_refresh();
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Questionmark)) {
-            self.mode = AppMode::Help;
-            return;
-        }
-        if self.mode == AppMode::Normal
-            && ctx.input(|i| i.key_pressed(egui::Key::V) && !i.modifiers.shift)
-        {
-            self.mode = AppMode::Visual;
-            if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.visible_entries.get(idx) {
-                    self.multi_selection.insert(entry.path.clone());
-                }
-            }
-            return;
-        }
-        if self.mode == AppMode::Normal
-            && ctx.input(|i| i.key_pressed(egui::Key::V) && i.modifiers.shift)
-        {
-            // Shift+V: Enter visual mode and select all
-            self.mode = AppMode::Visual;
-            self.multi_selection.clear();
-            for entry in &self.visible_entries {
-                self.multi_selection.insert(entry.path.clone());
-            }
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::A) && i.modifiers.ctrl) {
-            // Ctrl+A: Select all
-            if self.mode != AppMode::Visual {
-                self.mode = AppMode::Visual;
-            }
-            self.multi_selection.clear();
-            for entry in &self.visible_entries {
-                self.multi_selection.insert(entry.path.clone());
-            }
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
-            // Space: Toggle selection of current item
-            if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.visible_entries.get(idx) {
-                    if self.multi_selection.contains(&entry.path) {
-                        self.multi_selection.remove(&entry.path);
-                    } else {
-                        if self.mode != AppMode::Visual {
-                            self.mode = AppMode::Visual;
-                        }
-                        self.multi_selection.insert(entry.path.clone());
-                    }
-                }
-            }
-            return;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.shift) {
-            self.search_in_progress = false;
-            self.search_file_count = 0;
-            self.mode = AppMode::SearchInput;
-            self.focus_input = true;
-            return;
-        }
-
-        // 5. File Operation Triggers (Phase 6)
-        if ctx.input(|i| i.key_pressed(egui::Key::Y)) {
-            self.yank_selection(ClipboardOp::Copy);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::X)) {
-            self.yank_selection(ClipboardOp::Cut);
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::P)) {
-            self.paste_clipboard();
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::D)) {
-            self.mode = AppMode::DeleteConfirm;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::R)) {
-            if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.visible_entries.get(idx) {
-                    self.command_buffer = entry.name.clone();
-                    self.mode = AppMode::Rename;
-                    self.focus_input = true;
-                }
-            }
-        }
-
-        // 6. Navigation (j/k/arrows)
-        if self.visible_entries.is_empty() {
-            if ctx.input(|i| {
-                i.key_pressed(egui::Key::Backspace)
-                    || i.key_pressed(egui::Key::H)
-                    || i.key_pressed(egui::Key::ArrowLeft)
-            }) {
-                self.navigate_up();
-            }
-            return;
-        }
-
-        let mut changed = false;
-        let max_idx = self.visible_entries.len() - 1;
-        let current = self.selected_index.unwrap_or(0);
-        let mut new_index = current;
-
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J)) {
-            new_index = if current >= max_idx { 0 } else { current + 1 };
-            changed = true;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K)) {
-            new_index = if current == 0 { max_idx } else { current - 1 };
-            changed = true;
-        }
-        if ctx.input(|i| {
-            i.key_pressed(egui::Key::Backspace)
-                || i.key_pressed(egui::Key::H)
-                || i.key_pressed(egui::Key::ArrowLeft)
-        }) {
-            self.navigate_up();
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.visible_entries.get(idx) {
-                    let path = entry.path.clone();
-                    self.navigate_to(path);
-                }
-            }
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::L) || i.key_pressed(egui::Key::ArrowRight)) {
-            if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.visible_entries.get(idx) {
-                    if entry.is_dir {
-                        let path = entry.path.clone();
-                        self.navigate_to(path);
-                    }
-                }
-            }
-        }
-
-        if ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.shift) {
-            new_index = max_idx;
-            changed = true;
-        }
-        if ctx.input(|i| i.key_pressed(egui::Key::G) && !i.modifiers.shift) {
-            let now = Instant::now();
-            if let Some(last) = self.last_g_press {
-                if now.duration_since(last) < Duration::from_millis(500) {
-                    new_index = 0;
-                    self.last_g_press = None;
-                    changed = true;
-                } else {
-                    self.last_g_press = Some(now);
-                }
-            } else {
-                self.last_g_press = Some(now);
-            }
-        }
-        if let Some(last) = self.last_g_press {
-            if Instant::now().duration_since(last) > Duration::from_millis(500) {
-                self.last_g_press = None;
-            }
-        }
-
-        if changed {
-            self.selected_index = Some(new_index);
-            self.last_selection_change = Instant::now();
-            self.disable_autoscroll = false; // Re-enable autoscroll on keyboard navigation
-            if self.mode == AppMode::Visual {
-                if let Some(entry) = self.visible_entries.get(new_index) {
-                    self.multi_selection.insert(entry.path.clone());
-                }
-            }
-        }
-    }
 
     // --- Rendering Methods ---
 
-    fn render_parent_pane(
-        &self,
-        ui: &mut egui::Ui,
-        next_navigation: &std::cell::RefCell<Option<PathBuf>>,
-    ) {
-        ui.add_space(4.0);
-        ui.vertical_centered(|ui| {
-            ui.heading("Parent");
-        });
-        ui.separator();
-        let accent = egui::Color32::from_rgb(120, 180, 255);
-        let default_color = ui.visuals().text_color();
-
-        egui::ScrollArea::vertical()
-            .id_salt("parent_scroll")
-            .auto_shrink([false, false])
-            .max_height(ui.available_height())
-            .show(ui, |ui| {
-                ui.set_max_width(ui.available_width());
-                use egui_extras::{Column, TableBuilder};
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(false)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::auto().at_least(30.0))
-                    .column(Column::remainder().clip(true))
-                    .body(|body| {
-                        body.rows(24.0, self.parent_entries.len(), |mut row| {
-                            let entry = &self.parent_entries[row.index()];
-                            let is_active = entry.path == self.current_path;
-
-                            let icon_color = if is_active { accent } else { default_color };
-
-                            row.col(|ui| {
-                                ui.label(
-                                    egui::RichText::new(entry.get_icon())
-                                        .size(14.0)
-                                        .color(icon_color),
-                                );
-                            });
-                            row.col(|ui| {
-                                let text_color = if is_active { accent } else { default_color };
-                                let response = style::truncated_label_with_sense(
-                                    ui,
-                                    egui::RichText::new(entry.display_name()).color(text_color),
-                                    egui::Sense::click(),
-                                );
-                                if response.clicked() {
-                                    // Navigate to the clicked directory in the parent pane
-                                    *next_navigation.borrow_mut() = Some(entry.path.clone());
-                                }
-                            });
-                        });
-                    });
-            });
-    }
-
-    fn render_current_pane(
-        &mut self,
-        ui: &mut egui::Ui,
-        next_navigation: &std::cell::RefCell<Option<PathBuf>>,
-        next_selection: &std::cell::RefCell<Option<usize>>,
-        context_action: &std::cell::RefCell<Option<Box<dyn FnOnce(&mut Self)>>>,
-        ctx: &egui::Context,
-    ) {
-        // Detect manual scrolling in the central panel
-        if ui.ui_contains_pointer()
-            && ctx.input(|i| {
-                i.smooth_scroll_delta != egui::Vec2::ZERO || i.raw_scroll_delta != egui::Vec2::ZERO
-            })
-        {
-            self.disable_autoscroll = true;
-        }
-
-        egui::ScrollArea::vertical()
-            .id_salt("current_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                use egui_extras::{Column, TableBuilder};
-                let mut table = TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(false)
-                    .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::initial(30.0))
-                    .column(Column::remainder().clip(true));
-
-                // Only scroll to selected row if autoscroll is not disabled
-                if !self.disable_autoscroll {
-                    if let Some(idx) = self.selected_index {
-                        table = table.scroll_to_row(idx, None);
-                    }
-                }
-
-                table
-                    .header(20.0, |mut header| {
-                        header.col(|ui| {
-                            ui.label("");
-                        });
-                        header.col(|ui| {
-                            ui.label("Name");
-                        });
-                    })
-                    .body(|body| {
-                        body.rows(24.0, self.visible_entries.len(), |mut row| {
-                            let row_index = row.index();
-                            let entry = &self.visible_entries[row_index];
-                            let is_focused = self.selected_index == Some(row_index);
-                            let is_multi_selected = self.multi_selection.contains(&entry.path);
-                            let is_cut = self.clipboard_op == Some(ClipboardOp::Cut)
-                                && self.clipboard.contains(&entry.path);
-
-                            if is_multi_selected || is_focused {
-                                row.set_selected(true);
-                            }
-
-                            // Icon column
-                            row.col(|ui| {
-                                ui.label(egui::RichText::new(entry.get_icon()).size(14.0));
-                            });
-
-                            // Name column with context menu
-                            row.col(|ui| {
-                                let mut text = egui::RichText::new(entry.display_name());
-                                if is_multi_selected {
-                                    text = text.color(egui::Color32::LIGHT_BLUE);
-                                } else if is_cut {
-                                    text = text.color(egui::Color32::from_white_alpha(100));
-                                // Dimmed
-                                } else if entry.is_dir {
-                                    text = text.color(egui::Color32::from_rgb(120, 180, 255));
-                                // Subtle blue for directories
-                                } else {
-                                    // Keep default text color for files
-                                }
-
-                                let response = style::truncated_label_with_sense(
-                                    ui,
-                                    text,
-                                    egui::Sense::click(),
-                                );
-
-                                // Single click for selection only
-                                if response.clicked() {
-                                    *next_selection.borrow_mut() = Some(row_index);
-                                }
-
-                                // Double click to open/navigate
-                                if response.double_clicked() {
-                                    if let Some(entry) = self.visible_entries.get(row_index) {
-                                        *next_navigation.borrow_mut() = Some(entry.path.clone());
-                                    }
-                                }
-
-                                // Context menu on right-click
-                                let entry_clone = entry.clone();
-                                response.context_menu(|ui| {
-                                    if ui.button("📂 Open").clicked() {
-                                        if entry_clone.is_dir {
-                                            *next_navigation.borrow_mut() =
-                                                Some(entry_clone.path.clone());
-                                        } else {
-                                            let _ = open::that(&entry_clone.path);
-                                        }
-                                        ui.close();
-                                    }
-
-                                    ui.separator();
-
-                                    if ui.button("📋 Copy (y)").clicked() {
-                                        let path = entry_clone.path.clone();
-                                        *context_action.borrow_mut() =
-                                            Some(Box::new(move |app: &mut Self| {
-                                                app.clipboard.clear();
-                                                app.clipboard.insert(path);
-                                                app.clipboard_op = Some(ClipboardOp::Copy);
-                                                app.info_message =
-                                                    Some(("Copied 1 file".into(), Instant::now()));
-                                            }));
-                                        ui.close();
-                                    }
-
-                                    if ui.button("✂️ Cut (x)").clicked() {
-                                        let path = entry_clone.path.clone();
-                                        *context_action.borrow_mut() =
-                                            Some(Box::new(move |app: &mut Self| {
-                                                app.clipboard.clear();
-                                                app.clipboard.insert(path);
-                                                app.clipboard_op = Some(ClipboardOp::Cut);
-                                                app.info_message =
-                                                    Some(("Cut 1 file".into(), Instant::now()));
-                                            }));
-                                        ui.close();
-                                    }
-
-                                    if ui.button("📥 Paste (p)").clicked() {
-                                        *context_action.borrow_mut() =
-                                            Some(Box::new(|app: &mut Self| {
-                                                app.paste_clipboard();
-                                            }));
-                                        ui.close();
-                                    }
-
-                                    ui.separator();
-
-                                    if ui.button("✏️ Rename (r)").clicked() {
-                                        *next_selection.borrow_mut() = Some(row_index);
-                                        let name = entry_clone.name.clone();
-                                        *context_action.borrow_mut() =
-                                            Some(Box::new(move |app: &mut Self| {
-                                                app.command_buffer = name;
-                                                app.mode = AppMode::Rename;
-                                                app.focus_input = true;
-                                            }));
-                                        ui.close();
-                                    }
-
-                                    if ui.button("🗑️ Delete (d)").clicked() {
-                                        *next_selection.borrow_mut() = Some(row_index);
-                                        *context_action.borrow_mut() =
-                                            Some(Box::new(|app: &mut Self| {
-                                                app.mode = AppMode::DeleteConfirm;
-                                            }));
-                                        ui.close();
-                                    }
-
-                                    ui.separator();
-
-                                    if ui.button("ℹ️ Properties").clicked() {
-                                        let size = entry_clone.size;
-                                        let modified = entry_clone.modified;
-                                        let is_dir = entry_clone.is_dir;
-                                        *context_action.borrow_mut() =
-                                            Some(Box::new(move |app: &mut Self| {
-                                                app.info_message =
-                                                    Some((
-                                                        format!(
-                                            "{} | {} | Modified: {}",
-                                            if is_dir { "Directory" } else { "File" },
-                                            bytesize::ByteSize(size),
-                                            chrono::DateTime::<chrono::Local>::from(modified)
-                                                .format("%Y-%m-%d %H:%M")
-                                        ),
-                                                        Instant::now(),
-                                                    ));
-                                            }));
-                                        ui.close();
-                                    }
-                                });
-                            });
-                        });
-                    });
-            });
-    }
 
     // Note: execute_command method is missing but needed for handle_input to compile
-    fn execute_command(&mut self, _ctx: &egui::Context) {
+    pub(crate) fn execute_command(&mut self, _ctx: &egui::Context) {
         let parts: Vec<&str> = self.command_buffer.trim().split_whitespace().collect();
         if parts.is_empty() {
             self.mode = AppMode::Normal;

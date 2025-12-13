@@ -839,10 +839,10 @@ When creating pull requests:
 
 ## Medium: UX Features
 
-- [ ] **Trash bin support** — Add `trash` crate, replace `fs::remove_file`
-- [ ] **Sort options** — Name/Size/Modified/Extension, Asc/Desc, dirs-first toggle
+- [x] **Trash bin support** — Add `trash` crate, replace `fs::remove_file`
+- [x] **Sort options** — Name/Size/Modified/Extension, Asc/Desc, dirs-first toggle
 - [x] **Symlink indication** — Check `fs::symlink_metadata`, show indicator
-- [ ] **File permissions display** — Unix `rwxr-xr-x` format in preview
+- [x] **File permissions display** — Unix `rwxr-xr-x` format in preview
 - [x] **Status line info** — Selected size, item count, current path display
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
 - [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
