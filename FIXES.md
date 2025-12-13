@@ -451,21 +451,33 @@ fn main() -> eframe::Result<()> {
 
 ## Migration Checklist
 
-- [ ] Add `panel_widths`, `dragging_divider`, `last_screen_size` to struct
-- [ ] Extract `render_parent_pane()`, `render_current_pane()`, `render_preview_pane()`
-- [ ] Replace three panels with Strip layout
-- [ ] Add `render_divider()` method
-- [ ] Add `.clip(true)` to all `Column::remainder()`
-- [ ] Add `truncated_label()` helper
-- [ ] Constrain all ScrollAreas
-- [ ] Fix image preview sizing
-- [ ] Add responsive modal sizing
-- [ ] Wrap breadcrumbs in ScrollArea
-- [ ] Create `layout.rs` constants module
-- [ ] Add binary file detection
-- [ ] Add message auto-dismiss
+- [x] Add `panel_widths`, `dragging_divider`, `last_screen_size` to struct
+- [x] Extract `render_parent_pane()`, `render_current_pane()`, `render_preview_pane()`
+- [x] Replace three panels with Strip layout
+- [x] Add `render_divider()` method
+- [x] Add `.clip(true)` to all `Column::remainder()`
+- [x] Add `truncated_label()` helper
+- [x] Constrain all ScrollAreas
+- [x] Fix image preview sizing
+- [x] Add responsive modal sizing
+- [x] Wrap breadcrumbs in ScrollArea
+- [x] Create `style.rs` constants module (was layout.rs)
+- [x] Add binary file detection
+- [x] Add message auto-dismiss
 - [ ] Add settings persistence (optional)
 - [ ] Add CLI path argument (optional)
+
+### Code Organization (completed 2025-12)
+
+- [x] Extract `src/app.rs` — Heike struct, update loop
+- [x] Extract `src/entry.rs` — FileEntry struct
+- [x] Extract `src/style.rs` — Theme, layout constants
+- [x] Extract `src/state/` — AppMode, ClipboardOp, SearchResult, SearchOptions
+- [x] Extract `src/io/` — Directory reading, search, worker thread
+- [x] Extract `src/view/preview.rs` — File preview rendering
+- [ ] Extract `src/input.rs` — Keyboard handling (placeholder exists)
+- [ ] Extract `src/view/panels.rs` — Miller columns (placeholder exists)
+- [ ] Extract `src/view/modals.rs` — Dialogs (placeholder exists)
 
 ---
 

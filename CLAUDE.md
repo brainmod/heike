@@ -17,111 +17,118 @@
 ```
 heike/
 ├── src/
-│   ├── main.rs         # Monolithic application (3474 lines)
-│   └── layout.rs       # Layout constants and helpers
+│   ├── main.rs             # Entry point (67 lines)
+│   ├── app.rs              # Heike struct, update loop (2178 lines)
+│   ├── entry.rs            # FileEntry struct (99 lines)
+│   ├── input.rs            # Keyboard handling (placeholder)
+│   ├── style.rs            # Theme, layout constants (76 lines)
+│   ├── state/
+│   │   ├── mod.rs          # State module exports
+│   │   ├── mode.rs         # AppMode enum
+│   │   ├── clipboard.rs    # ClipboardOp enum
+│   │   └── search.rs       # SearchResult, SearchOptions
+│   ├── io/
+│   │   ├── mod.rs          # IO module exports
+│   │   ├── directory.rs    # Directory reading (62 lines)
+│   │   ├── search.rs       # Content search (361 lines)
+│   │   └── worker.rs       # Async worker thread (78 lines)
+│   └── view/
+│       ├── mod.rs          # View module exports
+│       ├── preview.rs      # File preview rendering (799 lines)
+│       ├── panels.rs       # Panel rendering (placeholder)
+│       └── modals.rs       # Dialogs/popups (placeholder)
 ├── assets/
 │   ├── heike_icon.png
 │   └── JetBrainsMonoNerdFont-Regular.ttf
 ├── examples/
-│   └── convert_icon.rs # Icon conversion utility
-├── Cargo.toml          # Dependencies and metadata
-├── README.md           # User-facing documentation
-├── CLAUDE.md           # This file (AI assistant guide)
-└── FIXES.md            # Detailed fix recommendations
+│   └── convert_icon.rs     # Icon conversion utility
+├── Cargo.toml              # Dependencies and metadata
+├── README.md               # User-facing documentation
+├── CLAUDE.md               # This file (AI assistant guide)
+└── FIXES.md                # Detailed fix recommendations
 ```
 
-### Target Structure (Future Refactor)
+### Remaining Refactor Tasks
 
 ```
+# Still TODO:
 src/
-├── main.rs
-├── app.rs              # Heike struct, update loop
-├── entry.rs            # FileEntry struct and impl
-├── input.rs            # Keyboard handling
-├── style.rs            # Theme, layout constants
-├── state/
-│   ├── mod.rs
-│   ├── mode.rs         # AppMode enum
-│   ├── clipboard.rs    # Clipboard operations
-│   └── search.rs       # Search state and results
-├── io/
-│   ├── mod.rs
-│   ├── directory.rs    # Directory reading
-│   ├── search.rs       # Content search logic
-│   ├── watcher.rs      # File system watching
-│   └── worker.rs       # Async worker thread
-└── view/
-    ├── mod.rs
-    ├── panels.rs       # Miller columns rendering
-    ├── preview.rs      # File preview logic
-    ├── modals.rs       # Dialogs and popups
-    └── table.rs        # Table rendering helpers
+├── input.rs            # Extract keyboard handling from app.rs
+├── view/
+│   ├── panels.rs       # Extract Miller columns from app.rs
+│   └── modals.rs       # Extract dialogs from app.rs
+└── app.rs              # Group Heike fields into sub-structs
 ```
 
 ---
 
 ## Key Components
 
-### Core Data Structures (src/main.rs)
+### Core Data Structures
 
-#### `Heike` struct (~line 645)
+#### `Heike` struct (src/app.rs)
 The main application state container. Key fields:
 
 ```rust
-struct Heike {
+pub struct Heike {
     // --- Navigation State ---
-    current_path: PathBuf,
-    parent_entries: Vec<FileEntry>,
-    entries: Vec<FileEntry>,
-    visible_entries: Vec<FileEntry>,
-    selected_index: Option<usize>,
-    selected_in_parent: Option<usize>,
-
-    // --- History & Navigation ---
-    history: Vec<PathBuf>,
-    history_index: Option<usize>,
-    last_selected: HashMap<PathBuf, String>,
+    pub current_path: PathBuf,
+    pub history: Vec<PathBuf>,
+    pub history_index: usize,
+    pub all_entries: Vec<FileEntry>,
+    pub visible_entries: Vec<FileEntry>,
+    pub parent_entries: Vec<FileEntry>,
+    pub selected_index: Option<usize>,
+    pub multi_selection: HashSet<PathBuf>,
+    pub directory_selections: HashMap<PathBuf, usize>,
+    pub pending_selection_path: Option<PathBuf>,
 
     // --- UI State ---
-    mode: AppMode,
-    filter_query: String,
-    command_input: String,
-    theme: Theme,
-    show_hidden: bool,
+    pub mode: AppMode,
+    pub command_buffer: String,
+    pub focus_input: bool,
+    pub theme: Theme,
+    pub show_hidden: bool,
 
     // --- Layout State ---
-    panel_widths: [f32; 2],  // [parent, preview]
-    dragging_divider: Option<usize>,
+    pub panel_widths: [f32; 2],  // [parent, preview]
+    pub dragging_divider: Option<usize>,
+    pub last_screen_size: egui::Vec2,
+    pub disable_autoscroll: bool,
 
     // --- Clipboard & Operations ---
-    clipboard: Vec<FileEntry>,
-    clipboard_op: ClipboardOp,
-    visual_mode_anchor: Option<usize>,
+    pub clipboard: HashSet<PathBuf>,
+    pub clipboard_op: Option<ClipboardOp>,
 
     // --- Search State ---
-    search_query: String,
-    search_results: Vec<SearchResult>,
-    search_selected_index: Option<usize>,
-    search_options: SearchOptions,
-    is_searching: bool,
+    pub search_query: String,
+    pub search_options: SearchOptions,
+    pub search_in_progress: bool,
+    pub search_file_count: usize,
 
     // --- Async I/O ---
-    io_sender: Sender<IoCommand>,
-    io_receiver: Receiver<IoResult>,
-    loading: bool,
-    pending_path: Option<PathBuf>,
+    pub command_tx: Sender<IoCommand>,
+    pub result_rx: Receiver<IoResult>,
+    pub is_loading: bool,
+    pub watcher: Option<Box<dyn Watcher>>,
+    pub watcher_rx: Receiver<Result<Event, notify::Error>>,
+    pub watched_path: Option<PathBuf>,
 
     // --- Syntax Highlighting ---
-    syntax_set: SyntaxSet,
-    theme_set: ThemeSet,
+    pub syntax_set: SyntaxSet,
+    pub theme_set: ThemeSet,
 
     // --- Messages & Feedback ---
-    error_message: Option<(String, Instant)>,
-    info_message: Option<(String, Instant)>,
+    pub error_message: Option<(String, Instant)>,
+    pub info_message: Option<(String, Instant)>,
+
+    // --- Timing ---
+    pub last_g_press: Option<Instant>,
+    pub last_selection_change: Instant,
 }
 ```
 
-#### `FileEntry` struct (~line 39)
+#### `FileEntry` struct (src/entry.rs)
 Represents a file or directory with metadata:
 
 ```rust
@@ -141,36 +148,47 @@ struct FileEntry {
 - `get_icon() -> &str` - Returns Nerd Font icon glyph
 - `display_name() -> String` - Adds arrow indicator for symlinks
 
-#### `AppMode` enum (~line 176)
+#### `AppMode` enum (src/state/mode.rs)
 Application modal state machine:
 
 ```rust
-enum AppMode {
+pub enum AppMode {
     Normal,
-    Filter,
     Visual,
+    Filtering,
     Command,
-    ShowingHelp,
-    Rename(String),          // Original name
-    ConfirmDelete,
-    Search,
-    SearchResults,
+    Help,
+    Rename,
+    DeleteConfirm,
+    SearchInput,
+    SearchResults {
+        query: String,
+        results: Vec<SearchResult>,
+        selected_index: usize,
+    },
 }
 ```
 
-#### `IoCommand` and `IoResult` enums (~line 200, 210)
+#### `IoCommand` and `IoResult` enums (src/io/worker.rs)
 Async communication with worker thread:
 
 ```rust
-enum IoCommand {
-    LoadDirectory { path: PathBuf, show_hidden: bool },
-    Search { path: PathBuf, options: SearchOptions },
+pub enum IoCommand {
+    LoadDirectory(PathBuf, bool),         // (path, show_hidden)
+    LoadParent(PathBuf, bool),            // (path, show_hidden)
+    SearchContent {
+        query: String,
+        root_path: PathBuf,
+        options: SearchOptions,
+    },
 }
 
-enum IoResult {
+pub enum IoResult {
     DirectoryLoaded { path: PathBuf, entries: Vec<FileEntry> },
-    DirectoryError { path: PathBuf, error: String },
-    SearchComplete { results: Vec<SearchResult> },
+    ParentLoaded(Vec<FileEntry>),
+    SearchCompleted(Vec<SearchResult>),
+    SearchProgress(usize),
+    Error(String),
 }
 ```
 
@@ -227,10 +245,10 @@ fn validate_selection(&mut self) {
 
 ### 3. Layout Constants
 
-**ALWAYS use constants from `src/layout.rs`:**
+**ALWAYS use constants from `src/style.rs`:**
 
 ```rust
-use layout::*;
+use style::*;
 
 // ✅ CORRECT
 let icon_size = ICON_SIZE;
@@ -390,7 +408,7 @@ fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
 - **Follow conventions** - Match existing code style exactly
 - **Test edge cases** - Empty, missing, large, binary, symlinks
 - **Update docs** - Keep README and CLAUDE.md synchronized
-- **Use layout constants** - Import from `layout.rs`
+- **Use layout constants** - Import from `style.rs`
 - **Handle errors gracefully** - Show user-friendly messages
 - **Preserve state** - Don't lose selection, clipboard, history
 
@@ -538,11 +556,13 @@ fn handle_normal_mode(&mut self, ctx: &egui::Context) {
 
 See the full task list at the end of this document. Key priorities:
 
-**🔴 Critical: Code Organization** (Top Priority)
-- Split monolithic `main.rs` into modules
-- Create `app.rs`, `entry.rs`, `state/`, `io/`, `view/`
-- Extract layout constants to `style.rs`
-- Group Heike fields into logical state structs
+**🟢 Mostly Complete: Code Organization**
+- ✅ Split monolithic `main.rs` into modules (DONE)
+- ✅ Created `app.rs`, `entry.rs`, `state/`, `io/`, `view/` (DONE)
+- ✅ Extract layout constants to `style.rs` (DONE)
+- 🔶 Extract `input.rs` keyboard handling (placeholder exists)
+- 🔶 Extract `view/panels.rs` and `view/modals.rs` (placeholders exist)
+- ❌ Group Heike fields into logical state structs (TODO)
 
 **🟡 Medium: Performance**
 - Incremental watcher updates (diff fs events)
@@ -630,7 +650,7 @@ See the full task list at the end of this document. Key priorities:
 
 ## Layout Constants Reference
 
-All layout constants are defined in `src/layout.rs`:
+All layout constants are defined in `src/style.rs`:
 
 ```rust
 // Sizing
@@ -795,16 +815,19 @@ When creating pull requests:
 
 ## High: Code Organization
 
-- [ ] **Split monolith** — Extract into modules:
-  - [ ] `src/app.rs` — Heike struct, update loop
-  - [ ] `src/entry.rs` — FileEntry
-  - [ ] `src/state/mod.rs` — Mode, Clipboard, Search state structs
-  - [ ] `src/io/mod.rs` — Directory reading, search, watcher, worker thread
-  - [ ] `src/view/mod.rs` — Panel rendering, preview, modals
-  - [ ] `src/input.rs` — Keyboard handling
-  - [ ] `src/style.rs` — Theme, layout constants
+- [x] **Split monolith** — Extract into modules:
+  - [x] `src/app.rs` — Heike struct, update loop (2178 lines)
+  - [x] `src/entry.rs` — FileEntry (99 lines)
+  - [x] `src/state/mod.rs` — Mode, Clipboard, Search state structs
+  - [x] `src/io/mod.rs` — Directory reading, search, worker thread
+  - [x] `src/view/mod.rs` — Preview rendering (799 lines in preview.rs)
+  - [ ] `src/input.rs` — Keyboard handling (placeholder only, still in app.rs)
+  - [x] `src/style.rs` — Theme, layout constants (76 lines)
+- [ ] **Extract remaining UI** — Move from app.rs to view/:
+  - [ ] `src/view/panels.rs` — Miller columns rendering
+  - [ ] `src/view/modals.rs` — Dialogs and popups
 - [ ] **Group Heike fields** — Split into `NavigationState`, `EntryState`, `ModeState`, etc.
-- [ ] **Layout constants module** — Extract magic numbers to named constants
+- [x] **Layout constants module** — All constants in `src/style.rs`
 
 ## Medium: Performance
 
@@ -830,7 +853,7 @@ When creating pull requests:
 - [ ] **Search progress tracking** — Track files searched, skipped, errors
 - [ ] **Retry logic for file ops** — Backoff retry for transient failures
 - [ ] **Consistent Result/Option usage** — Standardize error handling patterns
-- [ ] **Message auto-dismiss** — Clear info/error messages after timeout
+- [x] **Message auto-dismiss** — Clear info/error messages after timeout (MESSAGE_TIMEOUT_SECS)
 
 ## Low: Security Hardening
 
@@ -904,5 +927,5 @@ When creating pull requests:
 
 ---
 
-*Last updated: 2025-11-26*
+*Last updated: 2025-12-13*
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
