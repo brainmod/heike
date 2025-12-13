@@ -1040,9 +1040,38 @@ impl Heike {
                     }
                 }
             }
+            "cd" => {
+                if parts.len() < 2 {
+                    // Navigate to home directory if no argument provided
+                    if let Some(home) = directories::UserDirs::new() {
+                        self.navigate_to(home.home_dir().to_path_buf());
+                    }
+                } else {
+                    let path_str = parts[1..].join(" ");
+                    let path = if path_str.starts_with('~') {
+                        if let Some(home) = directories::UserDirs::new() {
+                            let rest = &path_str[1..];
+                            home.home_dir().join(rest)
+                        } else {
+                            PathBuf::from(path_str)
+                        }
+                    } else if path_str.starts_with('/') {
+                        PathBuf::from(path_str)
+                    } else {
+                        self.navigation.current_path.join(path_str)
+                    };
+                    self.navigate_to(path);
+                }
+            }
+            "help" => {
+                self.ui.info_message = Some((
+                    "Commands: q/quit, mkdir <name>, touch <file>, cd <path>, help".into(),
+                    Instant::now()
+                ));
+            }
             _ => {
                 self.ui.error_message =
-                    Some((format!("Unknown command: {}", parts[0]), Instant::now()));
+                    Some((format!("Unknown command: {}. Type 'help' for available commands.", parts[0]), Instant::now()));
             }
         }
 
