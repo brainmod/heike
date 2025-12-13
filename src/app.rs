@@ -484,18 +484,29 @@ impl Heike {
             HashSet::new()
         };
 
+        let mut error_count = 0;
         for path in targets {
-            if path.is_dir() {
-                let _ = fs::remove_dir_all(&path);
-            } else {
-                let _ = fs::remove_file(&path);
+            match trash::delete(&path) {
+                Ok(_) => {},
+                Err(e) => {
+                    error_count += 1;
+                    eprintln!("Failed to move to trash: {}", e);
+                }
             }
         }
 
         self.mode = AppMode::Normal;
         self.multi_selection.clear();
         self.request_refresh();
-        self.info_message = Some(("Items deleted".into(), Instant::now()));
+
+        if error_count > 0 {
+            self.error_message = Some((
+                format!("Failed to delete {} item(s)", error_count),
+                Instant::now(),
+            ));
+        } else {
+            self.info_message = Some(("Items moved to trash".into(), Instant::now()));
+        }
     }
 
     pub(crate) fn perform_rename(&mut self) {
