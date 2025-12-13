@@ -18,6 +18,7 @@ pub struct UIState {
     pub search_options: SearchOptions,
     pub search_in_progress: bool,
     pub search_file_count: usize,
+    pub last_settings_save: Instant,
 }
 
 impl UIState {
@@ -36,6 +37,7 @@ impl UIState {
             search_options: SearchOptions::default(),
             search_in_progress: false,
             search_file_count: 0,
+            last_settings_save: Instant::now(),
         }
     }
 

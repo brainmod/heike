@@ -603,6 +603,48 @@ impl Heike {
         }
     }
 
+    /// Save current UI settings to configuration file
+    fn save_settings(&mut self) {
+        use crate::config::{Config, ThemeConfig, PanelConfig, UiConfig, FontConfig};
+
+        let theme_mode = match self.ui.theme {
+            Theme::Light => "light",
+            Theme::Dark => "dark",
+        };
+
+        let config = Config {
+            theme: ThemeConfig {
+                mode: theme_mode.to_string(),
+            },
+            font: FontConfig {
+                font_size: 12.0,
+                icon_size: 14.0,
+            },
+            panel: PanelConfig {
+                parent_width: self.ui.panel_widths[0],
+                preview_width: self.ui.panel_widths[1],
+            },
+            ui: UiConfig {
+                show_hidden: self.ui.show_hidden,
+                sort_by: match self.ui.sort_options.sort_by {
+                    crate::state::SortBy::Name => "name",
+                    crate::state::SortBy::Size => "size",
+                    crate::state::SortBy::Modified => "modified",
+                    crate::state::SortBy::Extension => "extension",
+                }.to_string(),
+                sort_order: match self.ui.sort_options.sort_order {
+                    crate::state::SortOrder::Ascending => "asc",
+                    crate::state::SortOrder::Descending => "desc",
+                }.to_string(),
+                dirs_first: self.ui.sort_options.dirs_first,
+            },
+            bookmarks: self.bookmarks.clone(),
+        };
+
+        let _ = config.save();
+        self.ui.last_settings_save = Instant::now();
+    }
+
     // --- Drag and Drop Handling ---
     // (Currently handled in the eframe::App update method)
 
@@ -1026,6 +1068,11 @@ impl eframe::App for Heike {
             if time.elapsed() > Duration::from_secs(style::MESSAGE_TIMEOUT_SECS) {
                 self.ui.info_message = None;
             }
+        }
+
+        // Periodically save settings (every 10 seconds)
+        if self.ui.last_settings_save.elapsed() > Duration::from_secs(10) {
+            self.save_settings();
         }
 
         self.setup_watcher(ctx);
