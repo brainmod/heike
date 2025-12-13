@@ -11,6 +11,7 @@ use crate::view;
 use chrono::{DateTime, Local};
 use eframe::egui;
 use notify::{Event, RecursiveMode, Watcher};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -44,8 +45,8 @@ pub struct Heike {
     pub theme_set: ThemeSet,
     pub bookmarks: BookmarksConfig,
 
-    // Caching
-    pub preview_cache: view::PreviewCache,
+    // Caching (interior mutability for preview cache)
+    pub preview_cache: RefCell<view::PreviewCache>,
 }
 impl Heike {
     pub fn new(ctx: egui::Context, config: crate::config::Config, cli_start_dir: Option<PathBuf>) -> Self {
@@ -114,7 +115,7 @@ impl Heike {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
             bookmarks: config.bookmarks.clone(),
-            preview_cache: view::PreviewCache::new(),
+            preview_cache: RefCell::new(view::PreviewCache::new()),
         };
 
         app.request_refresh();
@@ -604,6 +605,29 @@ impl Heike {
 
     // --- Drag and Drop Handling ---
     // (Currently handled in the eframe::App update method)
+
+    /// Helper to get or compute cached preview content for a file
+    /// Returns cached content if available and file hasn't changed
+    fn get_or_compute_preview(&self, entry: &FileEntry, compute: impl FnOnce() -> String) -> String {
+        // Get current file's modified time
+        if let Ok(metadata) = fs::metadata(&entry.path) {
+            if let Ok(mtime) = metadata.modified() {
+                // Try to get from cache
+                let cached = self.preview_cache.borrow().get(&entry.path, mtime);
+                if let Some(content) = cached {
+                    return content;
+                }
+
+                // Not in cache, compute and store
+                let content = compute();
+                self.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), mtime);
+                return content;
+            }
+        }
+
+        // Fallback if metadata read fails
+        compute()
+    }
 
     fn render_preview(
         &self,
