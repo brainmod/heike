@@ -13,6 +13,11 @@ pub struct UIState {
     pub panel_widths: [f32; 2],
     pub dragging_divider: Option<usize>,
     pub last_screen_size: egui::Vec2,
+    pub is_loading: bool,
+    pub search_query: String,
+    pub search_options: SearchOptions,
+    pub search_in_progress: bool,
+    pub search_file_count: usize,
 }
 
 impl UIState {
@@ -26,6 +31,11 @@ impl UIState {
             panel_widths: [200.0, 350.0],
             dragging_divider: None,
             last_screen_size: egui::Vec2::ZERO,
+            is_loading: false,
+            search_query: String::new(),
+            search_options: SearchOptions::default(),
+            search_in_progress: false,
+            search_file_count: 0,
         }
     }
 
