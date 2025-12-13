@@ -861,10 +861,13 @@ When creating pull requests:
     - [x] Invert selection (Ctrl+R) added
     - [x] Unset mode (V for deselection while navigating) — DONE (V toggles visual mode)
     - [x] Selection count in status bar — DONE (shows selected count with size)
-    - [ ] Visual distinction between cursor and selected items — Future enhancement
+    - [x] Visual distinction between cursor and selected items — DONE (yellow ▶ and ✓ prefix)
   - [ ] Additional vim binds that make sense for file navigation
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
-- [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
+- [x] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.) — DONE
+  - [x] Default bookmarks: h=home, d=Downloads, p=Projects, t=/tmp
+  - [x] Configurable via config.toml
+  - [x] Path expansion for ~ (home directory)
 - [ ] **Tabs** — Multiple directory tabs with `iced_aw::Tabs` or similar
 
 ## Medium: Error Handling
@@ -970,5 +973,11 @@ When creating pull requests:
   *  - Next phase: Migrate Heike fields to use these state structs*
   *- Enhanced visual mode behavior*
   *  - V key now toggles visual mode (enter/exit with selection clear)*
-  *  - Selection count display in status bar confirmed working*
+  *  - Visual distinction: yellow ▶ for cursor, ✓ for multi-selected items*
+  *  - Selection count already displayed in status bar*
+  *- Implemented bookmarks navigation with 'g' prefix*
+  *  - gd=Downloads, gh=Home, gp=Projects, gt=/tmp (default)*
+  *  - Fully configurable in config.toml*
+  *  - Supports tilde expansion for home directory paths*
+  *  - Reuses existing double-press detection (gg=top)*
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
