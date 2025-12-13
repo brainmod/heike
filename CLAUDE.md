@@ -802,7 +802,7 @@ When creating pull requests:
 - [x] **Search results not clickable** — Added click handlers to search result rows
 - [x] **UTF-8 byte boundary panic in search** — Fixed preview truncation to use char boundaries instead of byte slicing
 - [x] **Mouse scroll decoupling** — Scrolling via mouse should not recenter view on selected item; only keyboard nav/scroll should recenter (enhanced edge case fix: reset disable_autoscroll on navigation)
-- [x] **Parent directory selection** — Navigating to parent should restore previous folder as active (selected) item (implemented using pending_selection_path)
+- [x] **Parent directory selection** — Navigating to parent should restore previous folder as active (selected) item (implemented using pending_selection_path; also fixed selection memory fallback in apply_filter())
 
 ## High: Layout Fixes
 
@@ -955,8 +955,11 @@ When creating pull requests:
 
 *Last updated: 2025-12-13*
 *Latest session completed:*
-  *- Mouse scroll decoupling edge case fix*
-  *- Parent directory selection restoration*
+  *- Mouse scroll decoupling edge case fix (reset disable_autoscroll on navigation)*
+  *- Parent directory selection restoration (bidirectional with pending_selection_path)*
+  *- Parent directory selection memory fix (don't fallback to index 0 in apply_filter)*
   *- Vim/Yazi keybinds: Ctrl-D/U/F/B (page navigation)*
-  *- Configuration system infrastructure (theme, panel sizes, UI prefs)*
+  *- Yazi selection inversion: Ctrl+R (invert selection)*
+  *- Configuration system infrastructure (theme, panel sizes, UI prefs, sort options)*
+  *- Fixed Ctrl-D delete conflict (exclude ctrl modifier from delete handler)*
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
