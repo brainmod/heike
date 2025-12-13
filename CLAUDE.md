@@ -854,7 +854,12 @@ When creating pull requests:
 - [x] **Additional vim/yazi keybinds** — Implement missing binds:
   - [x] `Ctrl-D` / `Ctrl-U` — Half-page down/up navigation
   - [x] `Ctrl-F` / `Ctrl-B` — Full-page down/up navigation
-  - [ ] Fix **Visual/selection mode** — Review yazi implementation and correct behavior (multi-selection logic)
+  - [x] `Ctrl-R` — Invert selection (Yazi-compatible)
+  - [ ] Fix **Visual/selection mode** — Review yazi implementation and correct behavior
+    - [x] Invert selection (Ctrl+R) added
+    - [ ] Unset mode (V for deselection while navigating) — Future enhancement
+    - [ ] Visual distinction between cursor and selected items — Future enhancement
+    - [ ] Selection count in status bar — Future enhancement
   - [ ] Additional vim binds that make sense for file navigation
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
 - [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
