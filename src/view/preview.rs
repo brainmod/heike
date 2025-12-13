@@ -12,13 +12,87 @@ use pulldown_cmark::{Event as MarkdownEvent, HeadingLevel, Parser, Tag, TagEnd};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 use tar::Archive;
 use zip::ZipArchive;
+
+/// Cached preview content with metadata for invalidation
+#[derive(Clone)]
+pub struct CachedPreview {
+    pub content: String,
+    pub modified_time: SystemTime,
+    pub cached_at: Instant,
+}
+
+/// Preview cache to avoid re-rendering identical files
+pub struct PreviewCache {
+    cache: HashMap<PathBuf, CachedPreview>,
+    max_entries: usize,
+}
+
+impl PreviewCache {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+            max_entries: 100, // Cache up to 100 file previews
+        }
+    }
+
+    /// Get cached preview if valid (not modified since caching)
+    pub fn get(&self, path: &PathBuf, current_mtime: SystemTime) -> Option<String> {
+        if let Some(cached) = self.cache.get(path) {
+            // Validate that file hasn't been modified
+            if cached.modified_time == current_mtime {
+                return Some(cached.content.clone());
+            }
+        }
+        None
+    }
+
+    /// Store preview in cache
+    pub fn insert(&mut self, path: PathBuf, content: String, mtime: SystemTime) {
+        // Simple LRU: remove oldest entry if cache is full
+        if self.cache.len() >= self.max_entries {
+            if let Some(oldest_key) = self
+                .cache
+                .iter()
+                .min_by_key(|(_, v)| v.cached_at)
+                .map(|(k, _)| k.clone())
+            {
+                self.cache.remove(&oldest_key);
+            }
+        }
+
+        self.cache.insert(
+            path,
+            CachedPreview {
+                content,
+                modified_time: mtime,
+                cached_at: Instant::now(),
+            },
+        );
+    }
+
+    /// Clear cache
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    /// Get cache statistics
+    pub fn stats(&self) -> (usize, usize) {
+        (self.cache.len(), self.max_entries)
+    }
+}
+
+impl Default for PreviewCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 pub fn render_large_file_message(ui: &mut egui::Ui, entry: &FileEntry) {
     ui.centered_and_justified(|ui| {

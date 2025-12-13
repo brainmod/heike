@@ -43,6 +43,9 @@ pub struct Heike {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
     pub bookmarks: BookmarksConfig,
+
+    // Caching
+    pub preview_cache: view::PreviewCache,
 }
 impl Heike {
     pub fn new(ctx: egui::Context, config: crate::config::Config, cli_start_dir: Option<PathBuf>) -> Self {
@@ -111,6 +114,7 @@ impl Heike {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
             bookmarks: config.bookmarks.clone(),
+            preview_cache: view::PreviewCache::new(),
         };
 
         app.request_refresh();
