@@ -1439,6 +1439,9 @@ impl eframe::App for Heike {
                                     ui.label("v");
                                     ui.label("Visual Select Mode");
                                     ui.end_row();
+                                    ui.label("Ctrl+R");
+                                    ui.label("Invert Selection");
+                                    ui.end_row();
                                     ui.label("y / x / p");
                                     ui.label("Copy / Cut / Paste");
                                     ui.end_row();

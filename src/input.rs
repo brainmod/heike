@@ -273,6 +273,26 @@ impl Heike {
             }
             return;
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
+            // Ctrl+R: Invert selection (select unselected, deselect selected)
+            let unselected: Vec<_> = self
+                .visible_entries
+                .iter()
+                .filter(|e| !self.multi_selection.contains(&e.path))
+                .map(|e| e.path.clone())
+                .collect();
+
+            self.multi_selection.clear();
+            for path in unselected {
+                self.multi_selection.insert(path);
+            }
+
+            // Enter visual mode if we have selections
+            if !self.multi_selection.is_empty() {
+                self.mode = AppMode::Visual;
+            }
+            return;
+        }
         if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.shift) {
             self.search_in_progress = false;
             self.search_file_count = 0;

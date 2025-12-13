@@ -52,6 +52,7 @@
   * `v`: Visual selection mode for multi-select
   * `Shift+V`: Visual select all
   * `Ctrl+A`: Select all
+  * `Ctrl+R`: Invert selection
   * `Space`: Toggle selection of current item
   * `/`: Fuzzy filter mode
   * `:`: Command mode
