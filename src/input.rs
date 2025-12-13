@@ -273,6 +273,26 @@ impl Heike {
             }
             return;
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
+            // Ctrl+R: Invert selection (select unselected, deselect selected)
+            let unselected: Vec<_> = self
+                .visible_entries
+                .iter()
+                .filter(|e| !self.multi_selection.contains(&e.path))
+                .map(|e| e.path.clone())
+                .collect();
+
+            self.multi_selection.clear();
+            for path in unselected {
+                self.multi_selection.insert(path);
+            }
+
+            // Enter visual mode if we have selections
+            if !self.multi_selection.is_empty() {
+                self.mode = AppMode::Visual;
+            }
+            return;
+        }
         if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.shift) {
             self.search_in_progress = false;
             self.search_file_count = 0;
@@ -291,7 +311,7 @@ impl Heike {
         if ctx.input(|i| i.key_pressed(egui::Key::P)) {
             self.paste_clipboard();
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::D)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
             self.mode = AppMode::DeleteConfirm;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::R)) {
@@ -353,6 +373,32 @@ impl Heike {
                     }
                 }
             }
+        }
+
+        // Page-down / half-page navigation (vim style)
+        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl) {
+            // Ctrl-D: half-page down
+            let page_size = (self.visible_entries.len() / 2).max(1);
+            new_index = (current + page_size).min(max_idx);
+            changed = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::U) && i.modifiers.ctrl) {
+            // Ctrl-U: half-page up
+            let page_size = (self.visible_entries.len() / 2).max(1);
+            new_index = if current >= page_size { current - page_size } else { 0 };
+            changed = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::F) && i.modifiers.ctrl) {
+            // Ctrl-F: full page down
+            let page_size = self.visible_entries.len().max(1);
+            new_index = (current + page_size).min(max_idx);
+            changed = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::B) && i.modifiers.ctrl) {
+            // Ctrl-B: full page up
+            let page_size = self.visible_entries.len().max(1);
+            new_index = if current >= page_size { current - page_size } else { 0 };
+            changed = true;
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.shift) {

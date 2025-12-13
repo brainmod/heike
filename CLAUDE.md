@@ -801,6 +801,8 @@ When creating pull requests:
 - [x] **Search results auto-scroll alignment** — Changed from Center to None to match main view behavior
 - [x] **Search results not clickable** — Added click handlers to search result rows
 - [x] **UTF-8 byte boundary panic in search** — Fixed preview truncation to use char boundaries instead of byte slicing
+- [x] **Mouse scroll decoupling** — Scrolling via mouse should not recenter view on selected item; only keyboard nav/scroll should recenter (enhanced edge case fix: reset disable_autoscroll on navigation)
+- [x] **Parent directory selection** — Navigating to parent should restore previous folder as active (selected) item (implemented using pending_selection_path; also fixed selection memory fallback in apply_filter())
 
 ## High: Layout Fixes
 
@@ -828,6 +830,11 @@ When creating pull requests:
   - [ ] `src/view/modals.rs` — Dialogs and popups
 - [ ] **Group Heike fields** — Split into `NavigationState`, `EntryState`, `ModeState`, etc.
 - [x] **Layout constants module** — All constants in `src/style.rs`
+- [ ] **Modularize preview components** — Make preview rendering pluggable:
+  - [ ] Create `PreviewHandler` trait for extensible preview types
+  - [ ] Allow config to enable/disable specific preview components
+  - [ ] Design for Yazi plugin compatibility (e.g., Lua preview plugins)
+  - [ ] Document plugin architecture for community extensions
 
 ## Medium: Performance
 
@@ -844,6 +851,16 @@ When creating pull requests:
 - [x] **Symlink indication** — Check `fs::symlink_metadata`, show indicator
 - [x] **File permissions display** — Unix `rwxr-xr-x` format in preview
 - [x] **Status line info** — Selected size, item count, current path display
+- [x] **Additional vim/yazi keybinds** — Implement missing binds:
+  - [x] `Ctrl-D` / `Ctrl-U` — Half-page down/up navigation
+  - [x] `Ctrl-F` / `Ctrl-B` — Full-page down/up navigation
+  - [x] `Ctrl-R` — Invert selection (Yazi-compatible)
+  - [ ] Fix **Visual/selection mode** — Review yazi implementation and correct behavior
+    - [x] Invert selection (Ctrl+R) added
+    - [ ] Unset mode (V for deselection while navigating) — Future enhancement
+    - [ ] Visual distinction between cursor and selected items — Future enhancement
+    - [ ] Selection count in status bar — Future enhancement
+  - [ ] Additional vim binds that make sense for file navigation
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
 - [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
 - [ ] **Tabs** — Multiple directory tabs with `iced_aw::Tabs` or similar
@@ -868,6 +885,15 @@ When creating pull requests:
 
 ## Low: Additional Features
 
+- [x] **Configuration system** — Create config file support (~/.config/heike/config.toml):
+  - [x] Font size customization (12.0pt default)
+  - [x] Icon size customization (14.0pt default)
+  - [x] Theme selection (dark/light mode)
+  - [x] Panel widths (parent/preview pane sizing)
+  - [x] UI preferences (show_hidden, sort options, dirs_first)
+  - [ ] Font override (path to custom TTF file) — Future enhancement
+  - [ ] Keybinding customization (TOML-based) — Future enhancement
+  - [ ] Custom color overrides — Future enhancement
 - [ ] **Settings persistence** — Save panel widths, theme, show_hidden to TOML
 - [ ] **CLI path argument** — Accept starting directory as arg
 - [ ] **zoxide integration** — Jump to frecent directories
@@ -876,11 +902,11 @@ When creating pull requests:
 
 ## Backlog: Future Considerations
 
-- [ ] **Configurable keybindings** — TOML-based keymap
-- [ ] **Custom themes** — User-defined color schemes
-- [ ] **Plugin system** — Lua or WASM extensibility
-- [ ] **Task manager UI** — Show async operation progress
+- [ ] **Advanced plugin system** — Lua or WASM extensibility (beyond preview components)
+- [ ] **Custom themes** — User-defined color schemes with full customization
+- [ ] **Task manager UI** — Show async operation progress and background tasks
 - [ ] **Split panes** — Side-by-side directory comparison
+- [ ] **Yazi plugin ecosystem bridge** — Runtime for running Yazi plugins in Heike
 
 ---
 
@@ -928,4 +954,12 @@ When creating pull requests:
 ---
 
 *Last updated: 2025-12-13*
+*Latest session completed:*
+  *- Mouse scroll decoupling edge case fix (reset disable_autoscroll on navigation)*
+  *- Parent directory selection restoration (bidirectional with pending_selection_path)*
+  *- Parent directory selection memory fix (don't fallback to index 0 in apply_filter)*
+  *- Vim/Yazi keybinds: Ctrl-D/U/F/B (page navigation)*
+  *- Yazi selection inversion: Ctrl+R (invert selection)*
+  *- Configuration system infrastructure (theme, panel sizes, UI prefs, sort options)*
+  *- Fixed Ctrl-D delete conflict (exclude ctrl modifier from delete handler)*
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*

@@ -57,13 +57,32 @@ pub struct Heike {
     pub theme_set: ThemeSet,
 }
 impl Heike {
-    pub fn new(ctx: egui::Context) -> Self {
+    pub fn new(ctx: egui::Context, config: crate::config::Config) -> Self {
         let start_path = directories::UserDirs::new()
             .map(|ud| ud.home_dir().to_path_buf())
             .unwrap_or_else(|| env::current_dir().unwrap_or_default());
 
         let (cmd_tx, res_rx) = spawn_worker(ctx.clone());
         let (_watch_tx, watch_rx) = channel();
+
+        // Parse theme from config
+        let theme = match config.theme.mode.as_str() {
+            "light" => Theme::Light,
+            _ => Theme::Dark,
+        };
+
+        // Parse sort options from config
+        let sort_by = match config.ui.sort_by.as_str() {
+            "size" => crate::state::SortBy::Size,
+            "modified" => crate::state::SortBy::Modified,
+            "extension" => crate::state::SortBy::Extension,
+            _ => crate::state::SortBy::Name,
+        };
+
+        let sort_order = match config.ui.sort_order.as_str() {
+            "desc" => crate::state::SortOrder::Descending,
+            _ => crate::state::SortOrder::Ascending,
+        };
 
         let mut app = Self {
             current_path: start_path.clone(),
@@ -85,16 +104,20 @@ impl Heike {
             search_options: SearchOptions::default(),
             search_in_progress: false,
             search_file_count: 0,
-            sort_options: SortOptions::default(),
+            sort_options: crate::state::SortOptions {
+                sort_by,
+                sort_order,
+                dirs_first: config.ui.dirs_first,
+            },
             error_message: None,
             info_message: None,
-            show_hidden: false,
-            theme: Theme::Dark,
+            show_hidden: config.ui.show_hidden,
+            theme,
             is_loading: false,
             last_g_press: None,
             last_selection_change: Instant::now(),
             disable_autoscroll: false,
-            panel_widths: [style::PARENT_DEFAULT, style::PREVIEW_DEFAULT],
+            panel_widths: [config.panel.parent_width, config.panel.preview_width],
             dragging_divider: None,
             last_screen_size: egui::Vec2::ZERO,
             command_tx: cmd_tx,
@@ -154,13 +177,17 @@ impl Heike {
         if let Some(path) = previously_selected {
             if let Some(idx) = self.visible_entries.iter().position(|e| e.path == path) {
                 self.selected_index = Some(idx);
-            } else if !self.visible_entries.is_empty() {
-                self.selected_index = Some(0);
-            } else {
-                self.selected_index = None;
             }
-        } else if self.visible_entries.is_empty() {
+            // If path not found, keep current selection if valid; otherwise default to 0
+        }
+
+        // Validate/fix selection if it's now out of bounds
+        if self.visible_entries.is_empty() {
             self.selected_index = None;
+        } else if let Some(idx) = self.selected_index {
+            if idx >= self.visible_entries.len() {
+                self.selected_index = Some(self.visible_entries.len() - 1);
+            }
         } else if self.selected_index.is_none() {
             self.selected_index = Some(0);
         }
@@ -350,6 +377,8 @@ impl Heike {
                 self.directory_selections
                     .insert(self.current_path.clone(), idx);
             }
+            // When navigating to parent, select the child directory we came from
+            self.pending_selection_path = Some(self.current_path.clone());
             self.navigate_to(parent.to_path_buf());
         }
     }
@@ -420,6 +449,8 @@ impl Heike {
             .get(&self.current_path)
             .copied()
             .or(Some(0));
+        // Re-enable autoscroll when navigating to ensure view centers on selection
+        self.disable_autoscroll = false;
         self.request_refresh();
     }
 
@@ -1388,6 +1419,12 @@ impl eframe::App for Heike {
                                     ui.label("gg / G");
                                     ui.label("Top / Bottom");
                                     ui.end_row();
+                                    ui.label("Ctrl+D / Ctrl+U");
+                                    ui.label("Half-Page Down / Up");
+                                    ui.end_row();
+                                    ui.label("Ctrl+F / Ctrl+B");
+                                    ui.label("Full-Page Down / Up");
+                                    ui.end_row();
                                     ui.label("Alt + Arrows");
                                     ui.label("History");
                                     ui.end_row();
@@ -1405,6 +1442,9 @@ impl eframe::App for Heike {
                                     ui.end_row();
                                     ui.label("v");
                                     ui.label("Visual Select Mode");
+                                    ui.end_row();
+                                    ui.label("Ctrl+R");
+                                    ui.label("Invert Selection");
                                     ui.end_row();
                                     ui.label("y / x / p");
                                     ui.label("Copy / Cut / Paste");

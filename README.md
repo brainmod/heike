@@ -47,9 +47,12 @@
   * `l`/Right Arrow: Enter directory
   * `Enter`: Open file / Enter directory
   * `gg` / `G`: Jump to top / bottom
+  * `Ctrl+D` / `Ctrl+U`: Half-page down / up
+  * `Ctrl+F` / `Ctrl+B`: Full-page down / up
   * `v`: Visual selection mode for multi-select
   * `Shift+V`: Visual select all
   * `Ctrl+A`: Select all
+  * `Ctrl+R`: Invert selection
   * `Space`: Toggle selection of current item
   * `/`: Fuzzy filter mode
   * `:`: Command mode

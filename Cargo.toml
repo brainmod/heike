@@ -30,3 +30,5 @@ grep-matcher = "0.1" # For grep matching interface
 ignore = "0.4"   # For gitignore-aware file walking
 rayon = "1.10"   # For parallel search operations
 trash = "5.0"    # For moving files to trash instead of permanent deletion
+serde = { version = "1.0", features = ["derive"] } # For serialization
+toml = "0.8"     # For TOML config file format

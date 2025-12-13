@@ -1,4 +1,5 @@
 mod app;
+mod config;
 mod entry;
 mod input;
 mod io;
@@ -7,6 +8,7 @@ mod style;
 mod view;
 
 use app::Heike;
+use config::Config;
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
@@ -36,6 +38,9 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
 
+            // Load configuration
+            let config = Config::load();
+
             // Configure fonts to use bundled Nerd Font for icon rendering
             let mut fonts = egui::FontDefinitions::default();
 
@@ -61,7 +66,7 @@ fn main() -> eframe::Result<()> {
 
             cc.egui_ctx.set_fonts(fonts);
 
-            Ok(Box::new(Heike::new(cc.egui_ctx.clone())))
+            Ok(Box::new(Heike::new(cc.egui_ctx.clone(), config)))
         }),
     )
 }
