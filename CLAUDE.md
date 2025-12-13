@@ -986,7 +986,11 @@ When creating pull requests:
   *  - Bookmarks displayed in help modal for discoverability*
   *  - Reuses existing double-press detection (gg=top)*
 
-  **Commits made: 7**
+  **Bug Fixes:**
+  *- Fixed bookmark conflict with file operations (gd now navigates to Downloads instead of delete)*
+  *- Added waiting_for_bookmark check to prevent y/x/p/d/r handlers from firing during g+key sequences*
+
+  **Commits made: 8**
   *- refactor: create logical state structs*
   *- feat: extract modal rendering to view/modals.rs*
   *- feat: allow exiting visual mode with V key (toggle)*
@@ -994,5 +998,6 @@ When creating pull requests:
   *- feat: implement bookmarks navigation with 'g' prefix*
   *- feat: display bookmarks in help modal*
   *- feat: add root directory bookmark (gr)*
+  *- fix: prevent file operation handlers from firing during bookmark sequences*
 
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
