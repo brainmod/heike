@@ -154,14 +154,32 @@ impl Heike {
                                 row.set_selected(true);
                             }
 
-                            // Icon column
+                            // Icon column with cursor indicator
                             row.col(|ui| {
-                                ui.label(egui::RichText::new(entry.get_icon()).size(14.0));
+                                let mut icon_text = String::new();
+                                if is_focused {
+                                    icon_text.push('▶');
+                                    icon_text.push(' ');
+                                }
+                                icon_text.push_str(entry.get_icon());
+                                let icon_color = if is_focused {
+                                    egui::Color32::YELLOW
+                                } else {
+                                    ui.visuals().text_color()
+                                };
+                                ui.label(
+                                    egui::RichText::new(icon_text)
+                                        .size(14.0)
+                                        .color(icon_color)
+                                );
                             });
 
                             // Name column with context menu
                             row.col(|ui| {
-                                let mut text = egui::RichText::new(entry.display_name());
+                                let mut display_name = if is_multi_selected { "✓ ".to_string() } else { String::new() };
+                                display_name.push_str(&entry.display_name());
+
+                                let mut text = egui::RichText::new(display_name);
                                 if is_multi_selected {
                                     text = text.color(egui::Color32::LIGHT_BLUE);
                                 } else if is_cut {
