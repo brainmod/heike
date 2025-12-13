@@ -1,3 +1,4 @@
+use crate::config::BookmarksConfig;
 use crate::entry::FileEntry;
 use crate::io::{fuzzy_match, is_likely_binary, read_directory, spawn_worker, IoCommand, IoResult};
 use crate::state::{AppMode, ClipboardOp, SearchOptions, SortOptions};
@@ -55,6 +56,7 @@ pub struct Heike {
     pub watched_path: Option<PathBuf>,
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
+    pub bookmarks: BookmarksConfig,
 }
 impl Heike {
     pub fn new(ctx: egui::Context, config: crate::config::Config) -> Self {
@@ -127,6 +129,7 @@ impl Heike {
             watched_path: None,
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
+            bookmarks: config.bookmarks.clone(),
         };
 
         app.request_refresh();

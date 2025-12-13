@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,8 @@ pub struct Config {
     pub panel: PanelConfig,
     pub font: FontConfig,
     pub ui: UiConfig,
+    #[serde(default)]
+    pub bookmarks: BookmarksConfig,
 }
 
 /// Theme configuration
@@ -49,8 +52,45 @@ pub struct UiConfig {
     pub dirs_first: bool,
 }
 
+/// Bookmarks configuration - map of single character to directory path
+/// Example: {"d" = "~/Downloads", "h" = "~", "p" = "~/Projects"}
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct BookmarksConfig {
+    pub shortcuts: HashMap<String, String>,
+}
+
+impl BookmarksConfig {
+    /// Resolve a bookmark path, expanding ~ to home directory
+    pub fn resolve_path(&self, key: &str) -> Option<PathBuf> {
+        self.shortcuts.get(key).map(|path_str| {
+            if path_str.starts_with('~') {
+                if let Some(home_dir) = directories::UserDirs::new().map(|ud| ud.home_dir().to_path_buf()) {
+                    let rest = &path_str[1..];
+                    home_dir.join(rest)
+                } else {
+                    PathBuf::from(path_str)
+                }
+            } else {
+                PathBuf::from(path_str)
+            }
+        })
+    }
+
+    /// Get all available bookmark keys
+    pub fn keys(&self) -> Vec<String> {
+        self.shortcuts.keys().cloned().collect()
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
+        let mut shortcuts = HashMap::new();
+        // Add default bookmarks
+        shortcuts.insert("h".to_string(), "~".to_string());
+        shortcuts.insert("d".to_string(), "~/Downloads".to_string());
+        shortcuts.insert("p".to_string(), "~/Projects".to_string());
+        shortcuts.insert("t".to_string(), "/tmp".to_string());
+
         Config {
             theme: ThemeConfig {
                 mode: "dark".to_string(),
@@ -69,6 +109,7 @@ impl Default for Config {
                 sort_order: "asc".to_string(),
                 dirs_first: true,
             },
+            bookmarks: BookmarksConfig { shortcuts },
         }
     }
 }
