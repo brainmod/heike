@@ -224,14 +224,19 @@ impl Heike {
             self.mode = AppMode::Help;
             return;
         }
-        if self.mode == AppMode::Normal
-            && ctx.input(|i| i.key_pressed(egui::Key::V) && !i.modifiers.shift)
-        {
-            self.mode = AppMode::Visual;
-            if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.visible_entries.get(idx) {
-                    self.multi_selection.insert(entry.path.clone());
+        if ctx.input(|i| i.key_pressed(egui::Key::V) && !i.modifiers.shift) {
+            if self.mode == AppMode::Normal {
+                // Enter visual mode
+                self.mode = AppMode::Visual;
+                if let Some(idx) = self.selected_index {
+                    if let Some(entry) = self.visible_entries.get(idx) {
+                        self.multi_selection.insert(entry.path.clone());
+                    }
                 }
+            } else if self.mode == AppMode::Visual {
+                // Exit visual mode (unset)
+                self.mode = AppMode::Normal;
+                self.multi_selection.clear();
             }
             return;
         }
@@ -302,19 +307,26 @@ impl Heike {
         }
 
         // 5. File Operation Triggers (Phase 6)
-        if ctx.input(|i| i.key_pressed(egui::Key::Y)) {
+        // Check if we're waiting for a bookmark key - if so, skip file operations
+        let waiting_for_bookmark = if let Some(last) = self.last_g_press {
+            Instant::now().duration_since(last) < Duration::from_millis(500)
+        } else {
+            false
+        };
+
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::Y)) {
             self.yank_selection(ClipboardOp::Copy);
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::X)) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::X)) {
             self.yank_selection(ClipboardOp::Cut);
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::P)) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::P)) {
             self.paste_clipboard();
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
             self.mode = AppMode::DeleteConfirm;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::R)) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R)) {
             if let Some(idx) = self.selected_index {
                 if let Some(entry) = self.visible_entries.get(idx) {
                     self.command_buffer = entry.name.clone();
@@ -405,23 +417,68 @@ impl Heike {
             new_index = max_idx;
             changed = true;
         }
+        // Handle 'g' key for navigation (gg=top, gX=bookmark)
         if ctx.input(|i| i.key_pressed(egui::Key::G) && !i.modifiers.shift) {
             let now = Instant::now();
             if let Some(last) = self.last_g_press {
                 if now.duration_since(last) < Duration::from_millis(500) {
+                    // Double 'g' press - jump to top
                     new_index = 0;
                     self.last_g_press = None;
                     changed = true;
                 } else {
+                    // Single 'g' press after timeout - start new sequence
                     self.last_g_press = Some(now);
                 }
             } else {
+                // First 'g' press - start sequence
                 self.last_g_press = Some(now);
             }
         }
+
+        // Check for bookmark navigation (g + key)
         if let Some(last) = self.last_g_press {
-            if Instant::now().duration_since(last) > Duration::from_millis(500) {
+            let elapsed = Instant::now().duration_since(last);
+            if elapsed > Duration::from_millis(500) {
+                // Timeout - clear the 'g' press
                 self.last_g_press = None;
+            } else if elapsed > Duration::from_millis(10) {
+                // Short delay to allow keyboard input processing
+                // Check for any single-character key press for bookmarks
+                let bookmark_key = ctx.input(|i| {
+                    for key in &[
+                        egui::Key::A, egui::Key::B, egui::Key::C, egui::Key::D, egui::Key::E, egui::Key::F,
+                        egui::Key::H, egui::Key::I, egui::Key::J, egui::Key::K, egui::Key::L, egui::Key::M,
+                        egui::Key::N, egui::Key::O, egui::Key::P, egui::Key::Q, egui::Key::R, egui::Key::S,
+                        egui::Key::T, egui::Key::U, egui::Key::V, egui::Key::W, egui::Key::X, egui::Key::Y, egui::Key::Z,
+                        egui::Key::Num0, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4,
+                        egui::Key::Num5, egui::Key::Num6, egui::Key::Num7, egui::Key::Num8, egui::Key::Num9,
+                    ] {
+                        if i.key_pressed(*key) {
+                            return Some(key.name().to_lowercase());
+                        }
+                    }
+                    None
+                });
+
+                if let Some(key) = bookmark_key {
+                    if let Some(path) = self.bookmarks.resolve_path(&key) {
+                        if path.is_dir() {
+                            self.navigate_to(path);
+                        } else {
+                            self.error_message = Some((
+                                format!("Bookmark '{}' does not exist or is not a directory", key),
+                                Instant::now()
+                            ));
+                        }
+                    } else {
+                        self.info_message = Some((
+                            format!("No bookmark '{}' defined", key),
+                            Instant::now()
+                        ));
+                    }
+                    self.last_g_press = None;
+                }
             }
         }
 

@@ -560,9 +560,11 @@ See the full task list at the end of this document. Key priorities:
 - ✅ Split monolithic `main.rs` into modules (DONE)
 - ✅ Created `app.rs`, `entry.rs`, `state/`, `io/`, `view/` (DONE)
 - ✅ Extract layout constants to `style.rs` (DONE)
-- 🔶 Extract `input.rs` keyboard handling (placeholder exists)
-- 🔶 Extract `view/panels.rs` and `view/modals.rs` (placeholders exist)
-- ❌ Group Heike fields into logical state structs (TODO)
+- ✅ Extract `input.rs` keyboard handling (DONE)
+- ✅ Extract `view/panels.rs` and `view/modals.rs` (DONE)
+- 🔶 Integrate logical state structs into Heike (IN PROGRESS)
+  - ✅ Created `NavigationState`, `SelectionState`, `EntryState`, `UIState`, `ModeState` (DONE)
+  - ⏳ Migrate Heike fields to use new state structs (NEXT PHASE)
 
 **🟡 Medium: Performance**
 - Incremental watcher updates (diff fs events)
@@ -857,12 +859,15 @@ When creating pull requests:
   - [x] `Ctrl-R` — Invert selection (Yazi-compatible)
   - [ ] Fix **Visual/selection mode** — Review yazi implementation and correct behavior
     - [x] Invert selection (Ctrl+R) added
-    - [ ] Unset mode (V for deselection while navigating) — Future enhancement
-    - [ ] Visual distinction between cursor and selected items — Future enhancement
-    - [ ] Selection count in status bar — Future enhancement
+    - [x] Unset mode (V for deselection while navigating) — DONE (V toggles visual mode)
+    - [x] Selection count in status bar — DONE (shows selected count with size)
+    - [x] Visual distinction between cursor and selected items — DONE (yellow ▶ and ✓ prefix)
   - [ ] Additional vim binds that make sense for file navigation
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
-- [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
+- [x] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.) — DONE
+  - [x] Default bookmarks: h=home, d=Downloads, p=Projects, t=/tmp
+  - [x] Configurable via config.toml
+  - [x] Path expansion for ~ (home directory)
 - [ ] **Tabs** — Multiple directory tabs with `iced_aw::Tabs` or similar
 
 ## Medium: Error Handling
@@ -954,12 +959,45 @@ When creating pull requests:
 ---
 
 *Last updated: 2025-12-13*
-*Latest session completed:*
-  *- Mouse scroll decoupling edge case fix (reset disable_autoscroll on navigation)*
-  *- Parent directory selection restoration (bidirectional with pending_selection_path)*
-  *- Parent directory selection memory fix (don't fallback to index 0 in apply_filter)*
-  *- Vim/Yazi keybinds: Ctrl-D/U/F/B (page navigation)*
-  *- Yazi selection inversion: Ctrl+R (invert selection)*
-  *- Configuration system infrastructure (theme, panel sizes, UI prefs, sort options)*
-  *- Fixed Ctrl-D delete conflict (exclude ctrl modifier from delete handler)*
+*Latest session completed (extensive refactoring + UX improvements):*
+
+  **Code Organization (Refactoring):**
+  *- Extracted modal rendering from app.rs to view/modals.rs*
+  *  - Help modal -> render_help_modal()*
+  *  - Search Input modal -> render_search_input_modal()*
+  *  - Command/Filter/Rename Input modal -> render_input_modal()*
+  *- Created logical state structs in src/state/ (refactoring foundation)*
+  *  - NavigationState (current_path, history management)*
+  *  - SelectionState (cursor, multi-selection tracking)*
+  *  - EntryState (file entries for different panes)*
+  *  - UIState (presentation and layout settings)*
+  *  - ModeState (application modal and input state)*
+  *  - Next phase: Migrate Heike fields to use these state structs*
+
+  **User Experience Enhancements:**
+  *- Enhanced visual mode behavior*
+  *  - V key now toggles visual mode (enter/exit with selection clear)*
+  *  - Visual distinction: yellow ▶ for cursor, ✓ for multi-selected items*
+  *  - Selection count already displayed in status bar with file size*
+  *- Implemented bookmarks navigation with 'g' prefix*
+  *  - Default bookmarks: gh=Home, gr=Root, gd=Downloads, gp=Projects, gt=/tmp*
+  *  - Fully configurable in config.toml*
+  *  - Supports tilde expansion for home directory paths*
+  *  - Bookmarks displayed in help modal for discoverability*
+  *  - Reuses existing double-press detection (gg=top)*
+
+  **Bug Fixes:**
+  *- Fixed bookmark conflict with file operations (gd now navigates to Downloads instead of delete)*
+  *- Added waiting_for_bookmark check to prevent y/x/p/d/r handlers from firing during g+key sequences*
+
+  **Commits made: 8**
+  *- refactor: create logical state structs*
+  *- feat: extract modal rendering to view/modals.rs*
+  *- feat: allow exiting visual mode with V key (toggle)*
+  *- feat: add visual distinction for cursor and selected items*
+  *- feat: implement bookmarks navigation with 'g' prefix*
+  *- feat: display bookmarks in help modal*
+  *- feat: add root directory bookmark (gr)*
+  *- fix: prevent file operation handlers from firing during bookmark sequences*
+
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
