@@ -560,9 +560,11 @@ See the full task list at the end of this document. Key priorities:
 - ✅ Split monolithic `main.rs` into modules (DONE)
 - ✅ Created `app.rs`, `entry.rs`, `state/`, `io/`, `view/` (DONE)
 - ✅ Extract layout constants to `style.rs` (DONE)
-- 🔶 Extract `input.rs` keyboard handling (placeholder exists)
-- 🔶 Extract `view/panels.rs` and `view/modals.rs` (placeholders exist)
-- ❌ Group Heike fields into logical state structs (TODO)
+- ✅ Extract `input.rs` keyboard handling (DONE)
+- ✅ Extract `view/panels.rs` and `view/modals.rs` (DONE)
+- 🔶 Integrate logical state structs into Heike (IN PROGRESS)
+  - ✅ Created `NavigationState`, `SelectionState`, `EntryState`, `UIState`, `ModeState` (DONE)
+  - ⏳ Migrate Heike fields to use new state structs (NEXT PHASE)
 
 **🟡 Medium: Performance**
 - Incremental watcher updates (diff fs events)
@@ -955,11 +957,15 @@ When creating pull requests:
 
 *Last updated: 2025-12-13*
 *Latest session completed:*
-  *- Mouse scroll decoupling edge case fix (reset disable_autoscroll on navigation)*
-  *- Parent directory selection restoration (bidirectional with pending_selection_path)*
-  *- Parent directory selection memory fix (don't fallback to index 0 in apply_filter)*
-  *- Vim/Yazi keybinds: Ctrl-D/U/F/B (page navigation)*
-  *- Yazi selection inversion: Ctrl+R (invert selection)*
-  *- Configuration system infrastructure (theme, panel sizes, UI prefs, sort options)*
-  *- Fixed Ctrl-D delete conflict (exclude ctrl modifier from delete handler)*
+  *- Extracted modal rendering from app.rs to view/modals.rs*
+  *  - Help modal -> render_help_modal()*
+  *  - Search Input modal -> render_search_input_modal()*
+  *  - Command/Filter/Rename Input modal -> render_input_modal()*
+  *- Created logical state structs in src/state/*
+  *  - NavigationState (current_path, history management)*
+  *  - SelectionState (cursor, multi-selection tracking)*
+  *  - EntryState (file entries for different panes)*
+  *  - UIState (presentation and layout settings)*
+  *  - ModeState (application modal and input state)*
+  *  - Next: Migrate Heike fields to use these state structs*
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
