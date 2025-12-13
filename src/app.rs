@@ -1,9 +1,8 @@
 use crate::config::BookmarksConfig;
 use crate::entry::FileEntry;
-use crate::io::{fuzzy_match, is_likely_binary, read_directory, spawn_worker, IoCommand, IoResult};
+use crate::io::{fuzzy_match, spawn_worker, IoCommand, IoResult};
 use crate::state::{
-    AppMode, ClipboardOp, SearchOptions, SortOptions, NavigationState, SelectionState,
-    EntryState, UIState, ModeState,
+    AppMode, ClipboardOp, NavigationState, SelectionState, EntryState, UIState, ModeState,
 };
 use crate::style::{self, Theme};
 use crate::view;
@@ -12,7 +11,7 @@ use chrono::{DateTime, Local};
 use eframe::egui;
 use notify::{Event, RecursiveMode, Watcher};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -44,6 +43,9 @@ pub struct Heike {
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
     pub bookmarks: BookmarksConfig,
+
+    // Preview system
+    pub preview_registry: view::PreviewRegistry,
 
     // Caching (interior mutability for preview cache)
     pub preview_cache: RefCell<view::PreviewCache>,
@@ -99,6 +101,10 @@ impl Heike {
         ui_state.show_hidden = config.ui.show_hidden;
         ui_state.panel_widths = [config.panel.parent_width, config.panel.preview_width];
 
+        // Create preview registry and configure enabled handlers
+        let mut preview_registry = view::create_default_registry();
+        preview_registry.set_enabled_handlers(config.previews.enabled.clone());
+
         let mut app = Self {
             navigation: NavigationState::new(start_path.clone()),
             selection: SelectionState::new(),
@@ -115,6 +121,7 @@ impl Heike {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
             bookmarks: config.bookmarks.clone(),
+            preview_registry,
             preview_cache: RefCell::new(view::PreviewCache::new()),
         };
 
@@ -639,6 +646,9 @@ impl Heike {
                 dirs_first: self.ui.sort_options.dirs_first,
             },
             bookmarks: self.bookmarks.clone(),
+            previews: crate::config::PreviewConfig {
+                enabled: self.preview_registry.enabled_handler_names(),
+            },
         };
 
         let _ = config.save();
@@ -691,6 +701,7 @@ impl Heike {
             None => return,
         };
 
+        // Add file type to metadata header
         style::truncated_label(
             ui,
             egui::RichText::new(format!("{} {}", entry.get_icon(), entry.display_name())).heading(),
@@ -706,282 +717,20 @@ impl Heike {
         ui.label(format!("Permissions: {}", entry.get_permissions_string()));
         ui.separator();
 
-        if entry.is_dir {
-            // Show directory contents in preview pane
-            if self.selection.last_selection_change.elapsed() <= Duration::from_millis(200) {
-                ui.centered_and_justified(|ui| {
-                    ui.spinner();
-                });
-                return;
-            }
-
-            match read_directory(&entry.path, self.ui.show_hidden) {
-                Ok(entries) => {
-                    let accent = egui::Color32::from_rgb(120, 180, 255);
-                    let highlighted_index = self.selection.directory_selections.get(&entry.path).copied();
-
-                    egui::ScrollArea::vertical()
-                        .id_salt("preview_dir")
-                        .auto_shrink([false, false])
-                        .max_height(ui.available_height())
-                        .show(ui, |ui| {
-                            ui.set_max_width(ui.available_width());
-                            let default_color = ui.visuals().text_color();
-                            use egui_extras::{Column, TableBuilder};
-                            TableBuilder::new(ui)
-                                .striped(true)
-                                .resizable(false)
-                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                .column(Column::auto().at_least(30.0))
-                                .column(Column::remainder().clip(true))
-                                .body(|body| {
-                                    body.rows(24.0, entries.len(), |mut row| {
-                                        let row_index = row.index();
-                                        let preview_entry = &entries[row_index];
-                                        let is_highlighted = highlighted_index == Some(row_index);
-                                        let text_color = if is_highlighted || preview_entry.is_dir {
-                                            accent
-                                        } else {
-                                            default_color
-                                        };
-                                        row.col(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(preview_entry.get_icon())
-                                                    .size(14.0)
-                                                    .color(text_color),
-                                            );
-                                        });
-                                        row.col(|ui| {
-                                            let response = style::truncated_label_with_sense(
-                                                ui,
-                                                egui::RichText::new(preview_entry.display_name())
-                                                    .color(text_color),
-                                                egui::Sense::click(),
-                                            );
-                                            if response.clicked() {
-                                                // Navigate to the directory being previewed (the currently selected item)
-                                                // and set the clicked item to be selected after navigation
-                                                *next_navigation.borrow_mut() =
-                                                    Some(entry.path.clone());
-                                                *pending_selection.borrow_mut() =
-                                                    Some(preview_entry.path.clone());
-                                            }
-                                        });
-                                    });
-                                });
-                        });
-                }
-                Err(e) => {
-                    ui.centered_and_justified(|ui| {
-                        ui.colored_label(
-                            egui::Color32::RED,
-                            format!("Cannot read directory: {}", e),
-                        );
-                    });
-                }
-            }
-            return;
-        }
-        if self.selection.last_selection_change.elapsed() <= Duration::from_millis(200) {
-            ui.centered_and_justified(|ui| {
-                ui.spinner();
-            });
-            return;
-        }
-
-        // Image preview
-        if matches!(
-            entry.extension.as_str(),
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico"
-        ) {
-            let uri = format!("file://{}", entry.path.display());
-            egui::ScrollArea::vertical()
-                .id_salt("preview_img")
-                .auto_shrink([false, false])
-                .max_height(ui.available_height())
-                .show(ui, |ui| {
-                    ui.set_max_width(ui.available_width());
-                    let available = ui.available_size();
-                    ui.add(
-                        egui::Image::new(uri)
-                            .max_width(available.x)
-                            .max_height(available.y - 100.0)
-                            .maintain_aspect_ratio(true)
-                            .shrink_to_fit(),
-                    );
-                });
-            return;
-        }
-
-        // Markdown preview
-        if matches!(entry.extension.as_str(), "md" | "markdown") {
-            view::preview::render_markdown_preview(ui, entry);
-            return;
-        }
-
-        // Archive preview
-        if matches!(
-            entry.extension.as_str(),
-            "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz"
-        ) {
-            view::preview::render_archive_preview(ui, entry);
-            return;
-        }
-
-        // Audio metadata preview
-        if matches!(
-            entry.extension.as_str(),
-            "mp3" | "flac" | "ogg" | "m4a" | "wav"
-        ) {
-            view::preview::render_audio_metadata(ui, entry);
-            return;
-        }
-
-        // PDF preview
-        if matches!(entry.extension.as_str(), "pdf") {
-            view::preview::render_pdf_preview(ui, entry);
-            return;
-        }
-
-        // Word document preview
-        if matches!(entry.extension.as_str(), "docx" | "doc") {
-            view::preview::render_docx_preview(ui, entry);
-            return;
-        }
-
-        // Excel spreadsheet preview
-        if matches!(entry.extension.as_str(), "xlsx" | "xls") {
-            view::preview::render_xlsx_preview(ui, entry);
-            return;
-        }
-
-        // Code/text files with syntax highlighting
-        let text_extensions = [
-            "rs",
-            "py",
-            "js",
-            "ts",
-            "jsx",
-            "tsx",
-            "c",
-            "cpp",
-            "h",
-            "hpp",
-            "java",
-            "go",
-            "rb",
-            "php",
-            "swift",
-            "kt",
-            "scala",
-            "sh",
-            "bash",
-            "zsh",
-            "fish",
-            "ps1",
-            "bat",
-            "cmd",
-            "html",
-            "css",
-            "scss",
-            "sass",
-            "less",
-            "xml",
-            "yaml",
-            "yml",
-            "toml",
-            "json",
-            "ini",
-            "cfg",
-            "txt",
-            "log",
-            "conf",
-            "config",
-            "env",
-            "gitignore",
-            "dockerignore",
-            "editorconfig",
-            "sql",
-            "r",
-            "lua",
-            "vim",
-            "el",
-            "clj",
-            "ex",
-            "exs",
-            "erl",
-            "hrl",
-            "hs",
-            "ml",
-            "fs",
-            "cs",
-            "vb",
-            "pl",
-            "pm",
-            "t",
-            "asm",
-            "s",
-            "d",
-            "diff",
-            "patch",
-            "mak",
-            "makefile",
-            "cmake",
-            "gradle",
-            "properties",
-            "prefs",
-            "plist",
-            "nix",
-            "lisp",
-            "scm",
-            "rkt",
-            "proto",
-            "thrift",
-            "graphql",
-            "gql",
-            "vue",
-            "svelte",
-            "astro",
-            "dart",
-            "nim",
-            "zig",
-            "v",
-            "vala",
-            "cr",
-            "rst",
-            "adoc",
-            "tex",
-            "bib",
-            "lock",
-        ];
-
-        let check_as_text = text_extensions.contains(&entry.extension.as_str())
-            || entry.extension.is_empty()
-            || entry.name.starts_with('.'); // Hidden config files often have no extension
-
-        if check_as_text {
-            if entry.size > style::MAX_PREVIEW_SIZE {
-                view::preview::render_large_file_message(ui, entry);
-                return;
-            }
-
-            if !is_likely_binary(&entry.path) {
-                view::preview::render_syntax_highlighted(ui, entry, &self.syntax_set, &self.theme_set, self.ui.theme);
-                return;
-            }
-        }
-
-        // Binary file - show info instead of auto-loading hex
-        ui.centered_and_justified(|ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(20.0);
-                ui.label(egui::RichText::new("📦 Binary File").size(18.0));
-                ui.add_space(10.0);
-                ui.label("Preview not available for this file type");
-                ui.add_space(5.0);
-                ui.label(format!("Extension: .{}", entry.extension));
-            });
-        });
+        // Use new modular preview system
+        view::render_preview(
+            ui,
+            entry,
+            &self.preview_registry,
+            self.ui.show_hidden,
+            self.selection.last_selection_change,
+            &self.selection.directory_selections,
+            &self.syntax_set,
+            &self.theme_set,
+            self.ui.theme,
+            next_navigation,
+            pending_selection,
+        );
     }
 
     // --- Drag and Drop Handling ---
