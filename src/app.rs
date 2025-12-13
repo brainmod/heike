@@ -702,6 +702,7 @@ impl Heike {
         );
         let datetime: DateTime<Local> = entry.modified.into();
         ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
+        ui.label(format!("Permissions: {}", entry.get_permissions_string()));
         ui.separator();
 
         if entry.is_dir {
