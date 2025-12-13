@@ -57,13 +57,32 @@ pub struct Heike {
     pub theme_set: ThemeSet,
 }
 impl Heike {
-    pub fn new(ctx: egui::Context) -> Self {
+    pub fn new(ctx: egui::Context, config: crate::config::Config) -> Self {
         let start_path = directories::UserDirs::new()
             .map(|ud| ud.home_dir().to_path_buf())
             .unwrap_or_else(|| env::current_dir().unwrap_or_default());
 
         let (cmd_tx, res_rx) = spawn_worker(ctx.clone());
         let (_watch_tx, watch_rx) = channel();
+
+        // Parse theme from config
+        let theme = match config.theme.mode.as_str() {
+            "light" => Theme::Light,
+            _ => Theme::Dark,
+        };
+
+        // Parse sort options from config
+        let sort_by = match config.ui.sort_by.as_str() {
+            "size" => crate::state::SortBy::Size,
+            "modified" => crate::state::SortBy::Modified,
+            "extension" => crate::state::SortBy::Extension,
+            _ => crate::state::SortBy::Name,
+        };
+
+        let sort_order = match config.ui.sort_order.as_str() {
+            "desc" => crate::state::SortOrder::Descending,
+            _ => crate::state::SortOrder::Ascending,
+        };
 
         let mut app = Self {
             current_path: start_path.clone(),
@@ -85,16 +104,20 @@ impl Heike {
             search_options: SearchOptions::default(),
             search_in_progress: false,
             search_file_count: 0,
-            sort_options: SortOptions::default(),
+            sort_options: crate::state::SortOptions {
+                sort_by,
+                sort_order,
+                dirs_first: config.ui.dirs_first,
+            },
             error_message: None,
             info_message: None,
-            show_hidden: false,
-            theme: Theme::Dark,
+            show_hidden: config.ui.show_hidden,
+            theme,
             is_loading: false,
             last_g_press: None,
             last_selection_change: Instant::now(),
             disable_autoscroll: false,
-            panel_widths: [style::PARENT_DEFAULT, style::PREVIEW_DEFAULT],
+            panel_widths: [config.panel.parent_width, config.panel.preview_width],
             dragging_divider: None,
             last_screen_size: egui::Vec2::ZERO,
             command_tx: cmd_tx,
