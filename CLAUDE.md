@@ -801,6 +801,8 @@ When creating pull requests:
 - [x] **Search results auto-scroll alignment** — Changed from Center to None to match main view behavior
 - [x] **Search results not clickable** — Added click handlers to search result rows
 - [x] **UTF-8 byte boundary panic in search** — Fixed preview truncation to use char boundaries instead of byte slicing
+- [ ] **Mouse scroll decoupling** — Scrolling via mouse should not recenter view on selected item; only keyboard nav/scroll should recenter
+- [ ] **Parent directory selection** — Navigating to parent should restore previous folder as active (selected) item
 
 ## High: Layout Fixes
 
@@ -828,6 +830,11 @@ When creating pull requests:
   - [ ] `src/view/modals.rs` — Dialogs and popups
 - [ ] **Group Heike fields** — Split into `NavigationState`, `EntryState`, `ModeState`, etc.
 - [x] **Layout constants module** — All constants in `src/style.rs`
+- [ ] **Modularize preview components** — Make preview rendering pluggable:
+  - [ ] Create `PreviewHandler` trait for extensible preview types
+  - [ ] Allow config to enable/disable specific preview components
+  - [ ] Design for Yazi plugin compatibility (e.g., Lua preview plugins)
+  - [ ] Document plugin architecture for community extensions
 
 ## Medium: Performance
 
@@ -844,6 +851,10 @@ When creating pull requests:
 - [x] **Symlink indication** — Check `fs::symlink_metadata`, show indicator
 - [x] **File permissions display** — Unix `rwxr-xr-x` format in preview
 - [x] **Status line info** — Selected size, item count, current path display
+- [ ] **Additional vim/yazi keybinds** — Implement missing binds:
+  - [ ] `Ctrl-F` / `Ctrl-B` — Page down/up navigation (half-page scroll)
+  - [ ] Fix **Visual/selection mode** — Review yazi implementation and correct behavior (multi-selection logic)
+  - [ ] Additional vim binds that make sense for file navigation
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
 - [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
 - [ ] **Tabs** — Multiple directory tabs with `iced_aw::Tabs` or similar
@@ -868,6 +879,12 @@ When creating pull requests:
 
 ## Low: Additional Features
 
+- [ ] **Configuration system** — Create config file support (.heike/config.toml):
+  - [ ] Font override (path to TTF file)
+  - [ ] Icon size and font size customization
+  - [ ] Keybinding customization (TOML-based)
+  - [ ] Theme selection and custom color overrides
+  - [ ] Default panel widths and UI preferences
 - [ ] **Settings persistence** — Save panel widths, theme, show_hidden to TOML
 - [ ] **CLI path argument** — Accept starting directory as arg
 - [ ] **zoxide integration** — Jump to frecent directories
@@ -876,11 +893,11 @@ When creating pull requests:
 
 ## Backlog: Future Considerations
 
-- [ ] **Configurable keybindings** — TOML-based keymap
-- [ ] **Custom themes** — User-defined color schemes
-- [ ] **Plugin system** — Lua or WASM extensibility
-- [ ] **Task manager UI** — Show async operation progress
+- [ ] **Advanced plugin system** — Lua or WASM extensibility (beyond preview components)
+- [ ] **Custom themes** — User-defined color schemes with full customization
+- [ ] **Task manager UI** — Show async operation progress and background tasks
 - [ ] **Split panes** — Side-by-side directory comparison
+- [ ] **Yazi plugin ecosystem bridge** — Runtime for running Yazi plugins in Heike
 
 ---
 
@@ -928,4 +945,5 @@ When creating pull requests:
 ---
 
 *Last updated: 2025-12-13*
+*New tasks added: Mouse scroll decoupling, parent directory selection, vim/yazi keybinds, modular preview components, configuration system*
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
