@@ -232,7 +232,7 @@ impl Heike {
                                                 app.clipboard.clear();
                                                 app.clipboard.insert(path);
                                                 app.clipboard_op = Some(ClipboardOp::Copy);
-                                                app.info_message =
+                                                app.ui.info_message =
                                                     Some(("Copied 1 file".into(), Instant::now()));
                                             }));
                                         ui.close();
@@ -245,7 +245,7 @@ impl Heike {
                                                 app.clipboard.clear();
                                                 app.clipboard.insert(path);
                                                 app.clipboard_op = Some(ClipboardOp::Cut);
-                                                app.info_message =
+                                                app.ui.info_message =
                                                     Some(("Cut 1 file".into(), Instant::now()));
                                             }));
                                         ui.close();
@@ -266,9 +266,9 @@ impl Heike {
                                         let name = entry_clone.name.clone();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
-                                                app.command_buffer = name;
-                                                app.mode = AppMode::Rename;
-                                                app.focus_input = true;
+                                                app.mode.command_buffer = name;
+                                                app.mode.set_mode(AppMode::Rename);
+                                                app.mode.focus_input = true;
                                             }));
                                         ui.close();
                                     }
@@ -277,7 +277,7 @@ impl Heike {
                                         *next_selection.borrow_mut() = Some(row_index);
                                         *context_action.borrow_mut() =
                                             Some(Box::new(|app: &mut Self| {
-                                                app.mode = AppMode::DeleteConfirm;
+                                                app.mode.set_mode(AppMode::DeleteConfirm);
                                             }));
                                         ui.close();
                                     }
@@ -291,7 +291,7 @@ impl Heike {
                                         let perms = entry_clone.get_permissions_string();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
-                                                app.info_message =
+                                                app.ui.info_message =
                                                     Some((
                                                         format!(
                                             "{} | {} | {} | Modified: {}",

@@ -44,7 +44,7 @@ impl Heike {
     pub fn handle_input(&mut self, ctx: &egui::Context) {
         // 1. Modal Inputs (Command, Filter, Rename, SearchInput)
         if matches!(
-            self.mode,
+            self.mode.mode,
             AppMode::Command | AppMode::Filtering | AppMode::Rename | AppMode::SearchInput
         ) {
             if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -110,7 +110,7 @@ impl Heike {
             query: ref current_query,
             ref results,
             ref mut selected_index,
-        } = self.mode
+        } = self.mode.mode
         {
             if ctx.input(|i| i.key_pressed(egui::Key::S) && i.modifiers.shift) {
                 self.ui.search_query = current_query.clone();
@@ -281,7 +281,7 @@ impl Heike {
         if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
             // Ctrl+R: Invert selection (select unselected, deselect selected)
             let unselected: Vec<_> = self
-                .visible_entries
+                .entries.visible_entries
                 .iter()
                 .filter(|e| !self.selection.multi_selection.contains(&e.path))
                 .map(|e| e.path.clone())

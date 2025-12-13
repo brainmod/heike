@@ -177,7 +177,7 @@ impl Heike {
 
     pub(crate) fn render_input_modal(&mut self, ctx: &egui::Context) {
         if matches!(
-            self.mode,
+            self.mode.mode,
             AppMode::Command | AppMode::Filtering | AppMode::Rename
         ) {
             egui::Area::new("input_popup".into())

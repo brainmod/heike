@@ -138,14 +138,14 @@ impl Heike {
     pub(crate) fn apply_filter(&mut self) {
         // Save currently selected item path before filtering
         let previously_selected = self
-            .selected_index
+            .selection.selected_index
             .and_then(|idx| self.entries.visible_entries.get(idx))
             .map(|e| e.path.clone());
 
         if self.mode.mode == AppMode::Filtering && !self.mode.command_buffer.is_empty() {
             let query = self.mode.command_buffer.clone();
             self.entries.visible_entries = self
-                .all_entries
+                .entries.all_entries
                 .iter()
                 .filter(|e| fuzzy_match(&e.name, &query))
                 .cloned()
@@ -183,7 +183,7 @@ impl Heike {
 
         // Separate directories and files if dirs_first is enabled
         let (mut dirs, mut files): (Vec<_>, Vec<_>) = self
-            .visible_entries
+            .entries.visible_entries
             .drain(..)
             .partition(|e| e.is_dir);
 
@@ -282,7 +282,7 @@ impl Heike {
                     // If there's a pending selection path, find and select it
                     if let Some(pending_path) = self.navigation.pending_selection_path.take() {
                         if let Some(idx) = self
-                            .visible_entries
+            .entries.visible_entries
                             .iter()
                             .position(|e| e.path == pending_path)
                         {
@@ -429,7 +429,7 @@ impl Heike {
         self.selection.multi_selection.clear();
         // Restore saved selection for this directory, or default to 0
         self.selection.selected_index = self
-            .directory_selections
+            .selection.directory_selections
             .get(&self.navigation.current_path)
             .copied()
             .or(Some(0));
@@ -1189,7 +1189,7 @@ impl eframe::App for Heike {
             ref query,
             ref results,
             selected_index,
-        } = self.mode
+        } = self.mode.mode
         {
             // Track click selection
             let next_result_selection = std::cell::RefCell::new(None);
@@ -1341,7 +1341,7 @@ impl eframe::App for Heike {
                     ref query,
                     ref results,
                     selected_index: _,
-                } = self.mode
+                } = self.mode.mode
                 {
                     self.mode.set_mode(AppMode::SearchResults {
                         query: query.clone(),
