@@ -1,6 +1,6 @@
 use crate::entry::FileEntry;
 use crate::io::{fuzzy_match, is_likely_binary, read_directory, spawn_worker, IoCommand, IoResult};
-use crate::state::{AppMode, ClipboardOp, SearchOptions};
+use crate::state::{AppMode, ClipboardOp, SearchOptions, SortOptions};
 use crate::style::{self, Theme};
 use crate::view;
 
@@ -36,6 +36,7 @@ pub struct Heike {
     pub search_options: SearchOptions,
     pub search_in_progress: bool,
     pub search_file_count: usize,
+    pub sort_options: SortOptions,
     pub error_message: Option<(String, Instant)>,
     pub info_message: Option<(String, Instant)>,
     pub show_hidden: bool,
@@ -84,6 +85,7 @@ impl Heike {
             search_options: SearchOptions::default(),
             search_in_progress: false,
             search_file_count: 0,
+            sort_options: SortOptions::default(),
             error_message: None,
             info_message: None,
             show_hidden: false,
@@ -145,6 +147,9 @@ impl Heike {
             self.visible_entries = self.all_entries.clone();
         }
 
+        // Apply sorting
+        self.sort_visible_entries();
+
         // Restore selection to previously selected item if possible
         if let Some(path) = previously_selected {
             if let Some(idx) = self.visible_entries.iter().position(|e| e.path == path) {
@@ -160,6 +165,43 @@ impl Heike {
             self.selected_index = Some(0);
         }
         self.validate_selection();
+    }
+
+    fn sort_visible_entries(&mut self) {
+        use crate::state::{SortBy, SortOrder};
+
+        // Separate directories and files if dirs_first is enabled
+        let (mut dirs, mut files): (Vec<_>, Vec<_>) = self
+            .visible_entries
+            .drain(..)
+            .partition(|e| e.is_dir);
+
+        // Sort both groups by the selected criteria
+        let sort_fn = |a: &FileEntry, b: &FileEntry| -> std::cmp::Ordering {
+            let cmp = match self.sort_options.sort_by {
+                SortBy::Name => a.name.cmp(&b.name),
+                SortBy::Size => a.size.cmp(&b.size),
+                SortBy::Modified => a.modified.cmp(&b.modified),
+                SortBy::Extension => a.extension.cmp(&b.extension),
+            };
+
+            match self.sort_options.sort_order {
+                SortOrder::Ascending => cmp,
+                SortOrder::Descending => cmp.reverse(),
+            }
+        };
+
+        dirs.sort_by(sort_fn);
+        files.sort_by(sort_fn);
+
+        // Combine back, with dirs first if enabled
+        if self.sort_options.dirs_first {
+            self.visible_entries.extend(dirs);
+            self.visible_entries.extend(files);
+        } else {
+            self.visible_entries.extend(files);
+            self.visible_entries.extend(dirs);
+        }
     }
 
     fn setup_watcher(&mut self, ctx: &egui::Context) {

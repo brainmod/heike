@@ -205,6 +205,21 @@ impl Heike {
             self.request_refresh();
             return;
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.shift) {
+            self.sort_options.cycle_sort_by();
+            self.apply_filter();
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.alt) {
+            self.sort_options.toggle_order();
+            self.apply_filter();
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.ctrl) {
+            self.sort_options.toggle_dirs_first();
+            self.apply_filter();
+            return;
+        }
         if ctx.input(|i| i.key_pressed(egui::Key::Questionmark)) {
             self.mode = AppMode::Help;
             return;
