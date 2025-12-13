@@ -350,6 +350,8 @@ impl Heike {
                 self.directory_selections
                     .insert(self.current_path.clone(), idx);
             }
+            // When navigating to parent, select the child directory we came from
+            self.pending_selection_path = Some(self.current_path.clone());
             self.navigate_to(parent.to_path_buf());
         }
     }
@@ -420,6 +422,8 @@ impl Heike {
             .get(&self.current_path)
             .copied()
             .or(Some(0));
+        // Re-enable autoscroll when navigating to ensure view centers on selection
+        self.disable_autoscroll = false;
         self.request_refresh();
     }
 
@@ -1387,6 +1391,12 @@ impl eframe::App for Heike {
                                     ui.end_row();
                                     ui.label("gg / G");
                                     ui.label("Top / Bottom");
+                                    ui.end_row();
+                                    ui.label("Ctrl+D / Ctrl+U");
+                                    ui.label("Half-Page Down / Up");
+                                    ui.end_row();
+                                    ui.label("Ctrl+F / Ctrl+B");
+                                    ui.label("Full-Page Down / Up");
                                     ui.end_row();
                                     ui.label("Alt + Arrows");
                                     ui.label("History");

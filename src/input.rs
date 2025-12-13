@@ -355,6 +355,32 @@ impl Heike {
             }
         }
 
+        // Page-down / half-page navigation (vim style)
+        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl) {
+            // Ctrl-D: half-page down
+            let page_size = (self.visible_entries.len() / 2).max(1);
+            new_index = (current + page_size).min(max_idx);
+            changed = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::U) && i.modifiers.ctrl) {
+            // Ctrl-U: half-page up
+            let page_size = (self.visible_entries.len() / 2).max(1);
+            new_index = if current >= page_size { current - page_size } else { 0 };
+            changed = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::F) && i.modifiers.ctrl) {
+            // Ctrl-F: full page down
+            let page_size = self.visible_entries.len().max(1);
+            new_index = (current + page_size).min(max_idx);
+            changed = true;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::B) && i.modifiers.ctrl) {
+            // Ctrl-B: full page up
+            let page_size = self.visible_entries.len().max(1);
+            new_index = if current >= page_size { current - page_size } else { 0 };
+            changed = true;
+        }
+
         if ctx.input(|i| i.key_pressed(egui::Key::G) && i.modifiers.shift) {
             new_index = max_idx;
             changed = true;
