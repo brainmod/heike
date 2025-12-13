@@ -224,14 +224,19 @@ impl Heike {
             self.mode = AppMode::Help;
             return;
         }
-        if self.mode == AppMode::Normal
-            && ctx.input(|i| i.key_pressed(egui::Key::V) && !i.modifiers.shift)
-        {
-            self.mode = AppMode::Visual;
-            if let Some(idx) = self.selected_index {
-                if let Some(entry) = self.visible_entries.get(idx) {
-                    self.multi_selection.insert(entry.path.clone());
+        if ctx.input(|i| i.key_pressed(egui::Key::V) && !i.modifiers.shift) {
+            if self.mode == AppMode::Normal {
+                // Enter visual mode
+                self.mode = AppMode::Visual;
+                if let Some(idx) = self.selected_index {
+                    if let Some(entry) = self.visible_entries.get(idx) {
+                        self.multi_selection.insert(entry.path.clone());
+                    }
                 }
+            } else if self.mode == AppMode::Visual {
+                // Exit visual mode (unset)
+                self.mode = AppMode::Normal;
+                self.multi_selection.clear();
             }
             return;
         }
