@@ -959,7 +959,9 @@ When creating pull requests:
 ---
 
 *Last updated: 2025-12-13*
-*Latest session completed:*
+*Latest session completed (extensive refactoring + UX improvements):*
+
+  **Code Organization (Refactoring):**
   *- Extracted modal rendering from app.rs to view/modals.rs*
   *  - Help modal -> render_help_modal()*
   *  - Search Input modal -> render_search_input_modal()*
@@ -971,13 +973,26 @@ When creating pull requests:
   *  - UIState (presentation and layout settings)*
   *  - ModeState (application modal and input state)*
   *  - Next phase: Migrate Heike fields to use these state structs*
+
+  **User Experience Enhancements:**
   *- Enhanced visual mode behavior*
   *  - V key now toggles visual mode (enter/exit with selection clear)*
   *  - Visual distinction: yellow ▶ for cursor, ✓ for multi-selected items*
-  *  - Selection count already displayed in status bar*
+  *  - Selection count already displayed in status bar with file size*
   *- Implemented bookmarks navigation with 'g' prefix*
-  *  - gd=Downloads, gh=Home, gp=Projects, gt=/tmp (default)*
+  *  - Default bookmarks: gh=Home, gr=Root, gd=Downloads, gp=Projects, gt=/tmp*
   *  - Fully configurable in config.toml*
   *  - Supports tilde expansion for home directory paths*
+  *  - Bookmarks displayed in help modal for discoverability*
   *  - Reuses existing double-press detection (gg=top)*
+
+  **Commits made: 7**
+  *- refactor: create logical state structs*
+  *- feat: extract modal rendering to view/modals.rs*
+  *- feat: allow exiting visual mode with V key (toggle)*
+  *- feat: add visual distinction for cursor and selected items*
+  *- feat: implement bookmarks navigation with 'g' prefix*
+  *- feat: display bookmarks in help modal*
+  *- feat: add root directory bookmark (gr)*
+
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
