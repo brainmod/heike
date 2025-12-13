@@ -307,19 +307,26 @@ impl Heike {
         }
 
         // 5. File Operation Triggers (Phase 6)
-        if ctx.input(|i| i.key_pressed(egui::Key::Y)) {
+        // Check if we're waiting for a bookmark key - if so, skip file operations
+        let waiting_for_bookmark = if let Some(last) = self.last_g_press {
+            Instant::now().duration_since(last) < Duration::from_millis(500)
+        } else {
+            false
+        };
+
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::Y)) {
             self.yank_selection(ClipboardOp::Copy);
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::X)) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::X)) {
             self.yank_selection(ClipboardOp::Cut);
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::P)) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::P)) {
             self.paste_clipboard();
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
             self.mode = AppMode::DeleteConfirm;
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::R)) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R)) {
             if let Some(idx) = self.selected_index {
                 if let Some(entry) = self.visible_entries.get(idx) {
                     self.command_buffer = entry.name.clone();
