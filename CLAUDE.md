@@ -801,8 +801,8 @@ When creating pull requests:
 - [x] **Search results auto-scroll alignment** — Changed from Center to None to match main view behavior
 - [x] **Search results not clickable** — Added click handlers to search result rows
 - [x] **UTF-8 byte boundary panic in search** — Fixed preview truncation to use char boundaries instead of byte slicing
-- [ ] **Mouse scroll decoupling** — Scrolling via mouse should not recenter view on selected item; only keyboard nav/scroll should recenter
-- [ ] **Parent directory selection** — Navigating to parent should restore previous folder as active (selected) item
+- [x] **Mouse scroll decoupling** — Scrolling via mouse should not recenter view on selected item; only keyboard nav/scroll should recenter (enhanced edge case fix: reset disable_autoscroll on navigation)
+- [x] **Parent directory selection** — Navigating to parent should restore previous folder as active (selected) item (implemented using pending_selection_path)
 
 ## High: Layout Fixes
 
@@ -851,8 +851,9 @@ When creating pull requests:
 - [x] **Symlink indication** — Check `fs::symlink_metadata`, show indicator
 - [x] **File permissions display** — Unix `rwxr-xr-x` format in preview
 - [x] **Status line info** — Selected size, item count, current path display
-- [ ] **Additional vim/yazi keybinds** — Implement missing binds:
-  - [ ] `Ctrl-F` / `Ctrl-B` — Page down/up navigation (half-page scroll)
+- [x] **Additional vim/yazi keybinds** — Implement missing binds:
+  - [x] `Ctrl-D` / `Ctrl-U` — Half-page down/up navigation
+  - [x] `Ctrl-F` / `Ctrl-B` — Full-page down/up navigation
   - [ ] Fix **Visual/selection mode** — Review yazi implementation and correct behavior (multi-selection logic)
   - [ ] Additional vim binds that make sense for file navigation
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
@@ -879,12 +880,15 @@ When creating pull requests:
 
 ## Low: Additional Features
 
-- [ ] **Configuration system** — Create config file support (.heike/config.toml):
-  - [ ] Font override (path to TTF file)
-  - [ ] Icon size and font size customization
-  - [ ] Keybinding customization (TOML-based)
-  - [ ] Theme selection and custom color overrides
-  - [ ] Default panel widths and UI preferences
+- [x] **Configuration system** — Create config file support (~/.config/heike/config.toml):
+  - [x] Font size customization (12.0pt default)
+  - [x] Icon size customization (14.0pt default)
+  - [x] Theme selection (dark/light mode)
+  - [x] Panel widths (parent/preview pane sizing)
+  - [x] UI preferences (show_hidden, sort options, dirs_first)
+  - [ ] Font override (path to custom TTF file) — Future enhancement
+  - [ ] Keybinding customization (TOML-based) — Future enhancement
+  - [ ] Custom color overrides — Future enhancement
 - [ ] **Settings persistence** — Save panel widths, theme, show_hidden to TOML
 - [ ] **CLI path argument** — Accept starting directory as arg
 - [ ] **zoxide integration** — Jump to frecent directories
@@ -945,5 +949,9 @@ When creating pull requests:
 ---
 
 *Last updated: 2025-12-13*
-*New tasks added: Mouse scroll decoupling, parent directory selection, vim/yazi keybinds, modular preview components, configuration system*
+*Latest session completed:*
+  *- Mouse scroll decoupling edge case fix*
+  *- Parent directory selection restoration*
+  *- Vim/Yazi keybinds: Ctrl-D/U/F/B (page navigation)*
+  *- Configuration system infrastructure (theme, panel sizes, UI prefs)*
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
