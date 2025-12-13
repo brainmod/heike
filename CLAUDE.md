@@ -859,9 +859,9 @@ When creating pull requests:
   - [x] `Ctrl-R` — Invert selection (Yazi-compatible)
   - [ ] Fix **Visual/selection mode** — Review yazi implementation and correct behavior
     - [x] Invert selection (Ctrl+R) added
-    - [ ] Unset mode (V for deselection while navigating) — Future enhancement
+    - [x] Unset mode (V for deselection while navigating) — DONE (V toggles visual mode)
+    - [x] Selection count in status bar — DONE (shows selected count with size)
     - [ ] Visual distinction between cursor and selected items — Future enhancement
-    - [ ] Selection count in status bar — Future enhancement
   - [ ] Additional vim binds that make sense for file navigation
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
 - [ ] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.)
@@ -961,11 +961,14 @@ When creating pull requests:
   *  - Help modal -> render_help_modal()*
   *  - Search Input modal -> render_search_input_modal()*
   *  - Command/Filter/Rename Input modal -> render_input_modal()*
-  *- Created logical state structs in src/state/*
+  *- Created logical state structs in src/state/ (refactoring foundation)*
   *  - NavigationState (current_path, history management)*
   *  - SelectionState (cursor, multi-selection tracking)*
   *  - EntryState (file entries for different panes)*
   *  - UIState (presentation and layout settings)*
   *  - ModeState (application modal and input state)*
-  *  - Next: Migrate Heike fields to use these state structs*
+  *  - Next phase: Migrate Heike fields to use these state structs*
+  *- Enhanced visual mode behavior*
+  *  - V key now toggles visual mode (enter/exit with selection clear)*
+  *  - Selection count display in status bar confirmed working*
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*
