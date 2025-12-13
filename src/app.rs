@@ -1,13 +1,17 @@
 use crate::config::BookmarksConfig;
 use crate::entry::FileEntry;
 use crate::io::{fuzzy_match, is_likely_binary, read_directory, spawn_worker, IoCommand, IoResult};
-use crate::state::{AppMode, ClipboardOp, SearchOptions, SortOptions};
+use crate::state::{
+    AppMode, ClipboardOp, SearchOptions, SortOptions, NavigationState, SelectionState,
+    EntryState, UIState, ModeState,
+};
 use crate::style::{self, Theme};
 use crate::view;
 
 use chrono::{DateTime, Local};
 use eframe::egui;
 use notify::{Event, RecursiveMode, Watcher};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
@@ -18,51 +22,50 @@ use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
 pub struct Heike {
-    pub current_path: PathBuf,
-    pub history: Vec<PathBuf>,
-    pub history_index: usize,
-    pub all_entries: Vec<FileEntry>,
-    pub visible_entries: Vec<FileEntry>,
-    pub parent_entries: Vec<FileEntry>,
-    pub selected_index: Option<usize>,
-    pub multi_selection: HashSet<PathBuf>,
-    pub directory_selections: HashMap<PathBuf, usize>,
-    pub pending_selection_path: Option<PathBuf>,
-    pub mode: AppMode,
-    pub command_buffer: String,
-    pub focus_input: bool,
+    // Logical state groupings
+    pub navigation: NavigationState,
+    pub selection: SelectionState,
+    pub entries: EntryState,
+    pub ui: UIState,
+    pub mode: ModeState,
+
+    // Clipboard operations
     pub clipboard: HashSet<PathBuf>,
     pub clipboard_op: Option<ClipboardOp>,
-    pub search_query: String,
-    pub search_options: SearchOptions,
-    pub search_in_progress: bool,
-    pub search_file_count: usize,
-    pub sort_options: SortOptions,
-    pub error_message: Option<(String, Instant)>,
-    pub info_message: Option<(String, Instant)>,
-    pub show_hidden: bool,
-    pub theme: Theme,
-    pub is_loading: bool,
-    pub last_g_press: Option<Instant>,
-    pub last_selection_change: Instant,
-    pub disable_autoscroll: bool,
-    pub panel_widths: [f32; 2],
-    pub dragging_divider: Option<usize>,
-    pub last_screen_size: egui::Vec2,
+
+    // Async I/O channels
     pub command_tx: Sender<IoCommand>,
     pub result_rx: Receiver<IoResult>,
     pub watcher: Option<Box<dyn Watcher>>,
     pub watcher_rx: Receiver<Result<Event, notify::Error>>,
     pub watched_path: Option<PathBuf>,
+
+    // Resources
     pub syntax_set: SyntaxSet,
     pub theme_set: ThemeSet,
     pub bookmarks: BookmarksConfig,
+
+    // Caching (interior mutability for preview cache)
+    pub preview_cache: RefCell<view::PreviewCache>,
 }
 impl Heike {
-    pub fn new(ctx: egui::Context, config: crate::config::Config) -> Self {
-        let start_path = directories::UserDirs::new()
-            .map(|ud| ud.home_dir().to_path_buf())
-            .unwrap_or_else(|| env::current_dir().unwrap_or_default());
+    pub fn new(ctx: egui::Context, config: crate::config::Config, cli_start_dir: Option<PathBuf>) -> Self {
+        let start_path = if let Some(dir) = cli_start_dir {
+            // Use CLI-provided directory if valid
+            if dir.is_dir() {
+                dir
+            } else {
+                // Fall back to home dir if CLI path doesn't exist
+                directories::UserDirs::new()
+                    .map(|ud| ud.home_dir().to_path_buf())
+                    .unwrap_or_else(|| env::current_dir().unwrap_or_default())
+            }
+        } else {
+            // Use default logic if no CLI arg provided
+            directories::UserDirs::new()
+                .map(|ud| ud.home_dir().to_path_buf())
+                .unwrap_or_else(|| env::current_dir().unwrap_or_default())
+        };
 
         let (cmd_tx, res_rx) = spawn_worker(ctx.clone());
         let (_watch_tx, watch_rx) = channel();
@@ -86,42 +89,24 @@ impl Heike {
             _ => crate::state::SortOrder::Ascending,
         };
 
+        let sort_options = crate::state::SortOptions {
+            sort_by,
+            sort_order,
+            dirs_first: config.ui.dirs_first,
+        };
+
+        let mut ui_state = UIState::new(theme.clone(), sort_options);
+        ui_state.show_hidden = config.ui.show_hidden;
+        ui_state.panel_widths = [config.panel.parent_width, config.panel.preview_width];
+
         let mut app = Self {
-            current_path: start_path.clone(),
-            history: vec![start_path.clone()],
-            history_index: 0,
-            all_entries: Vec::new(),
-            visible_entries: Vec::new(),
-            parent_entries: Vec::new(),
-            selected_index: Some(0),
-            multi_selection: HashSet::new(),
-            directory_selections: HashMap::new(),
-            pending_selection_path: None,
-            mode: AppMode::Normal,
-            command_buffer: String::new(),
-            focus_input: false,
-            clipboard: HashSet::new(), // Init
-            clipboard_op: None,        // Init
-            search_query: String::new(),
-            search_options: SearchOptions::default(),
-            search_in_progress: false,
-            search_file_count: 0,
-            sort_options: crate::state::SortOptions {
-                sort_by,
-                sort_order,
-                dirs_first: config.ui.dirs_first,
-            },
-            error_message: None,
-            info_message: None,
-            show_hidden: config.ui.show_hidden,
-            theme,
-            is_loading: false,
-            last_g_press: None,
-            last_selection_change: Instant::now(),
-            disable_autoscroll: false,
-            panel_widths: [config.panel.parent_width, config.panel.preview_width],
-            dragging_divider: None,
-            last_screen_size: egui::Vec2::ZERO,
+            navigation: NavigationState::new(start_path.clone()),
+            selection: SelectionState::new(),
+            entries: EntryState::new(),
+            ui: ui_state,
+            mode: ModeState::new(),
+            clipboard: HashSet::new(),
+            clipboard_op: None,
             command_tx: cmd_tx,
             result_rx: res_rx,
             watcher: None,
@@ -130,6 +115,7 @@ impl Heike {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
             bookmarks: config.bookmarks.clone(),
+            preview_cache: RefCell::new(view::PreviewCache::new()),
         };
 
         app.request_refresh();
@@ -137,40 +123,40 @@ impl Heike {
     }
 
     pub(crate) fn request_refresh(&mut self) {
-        self.is_loading = true;
-        self.error_message = None;
+        self.ui.is_loading = true;
+        self.ui.error_message = None;
         // Keep info message if it's fresh, or maybe clear it? Let's keep it for feedback.
         let _ = self.command_tx.send(IoCommand::LoadDirectory(
-            self.current_path.clone(),
-            self.show_hidden,
+            self.navigation.current_path.clone(),
+            self.ui.show_hidden,
         ));
-        if let Some(parent) = self.current_path.parent() {
+        if let Some(parent) = self.navigation.current_path.parent() {
             let _ = self.command_tx.send(IoCommand::LoadParent(
                 parent.to_path_buf(),
-                self.show_hidden,
+                self.ui.show_hidden,
             ));
         } else {
-            self.parent_entries.clear();
+            self.entries.parent_entries.clear();
         }
     }
 
     pub(crate) fn apply_filter(&mut self) {
         // Save currently selected item path before filtering
         let previously_selected = self
-            .selected_index
-            .and_then(|idx| self.visible_entries.get(idx))
+            .selection.selected_index
+            .and_then(|idx| self.entries.visible_entries.get(idx))
             .map(|e| e.path.clone());
 
-        if self.mode == AppMode::Filtering && !self.command_buffer.is_empty() {
-            let query = self.command_buffer.clone();
-            self.visible_entries = self
-                .all_entries
+        if self.mode.mode == AppMode::Filtering && !self.mode.command_buffer.is_empty() {
+            let query = self.mode.command_buffer.clone();
+            self.entries.visible_entries = self
+                .entries.all_entries
                 .iter()
                 .filter(|e| fuzzy_match(&e.name, &query))
                 .cloned()
                 .collect();
         } else {
-            self.visible_entries = self.all_entries.clone();
+            self.entries.visible_entries = self.entries.all_entries.clone();
         }
 
         // Apply sorting
@@ -178,21 +164,21 @@ impl Heike {
 
         // Restore selection to previously selected item if possible
         if let Some(path) = previously_selected {
-            if let Some(idx) = self.visible_entries.iter().position(|e| e.path == path) {
-                self.selected_index = Some(idx);
+            if let Some(idx) = self.entries.visible_entries.iter().position(|e| e.path == path) {
+                self.selection.selected_index = Some(idx);
             }
             // If path not found, keep current selection if valid; otherwise default to 0
         }
 
         // Validate/fix selection if it's now out of bounds
-        if self.visible_entries.is_empty() {
-            self.selected_index = None;
-        } else if let Some(idx) = self.selected_index {
-            if idx >= self.visible_entries.len() {
-                self.selected_index = Some(self.visible_entries.len() - 1);
+        if self.entries.visible_entries.is_empty() {
+            self.selection.selected_index = None;
+        } else if let Some(idx) = self.selection.selected_index {
+            if idx >= self.entries.visible_entries.len() {
+                self.selection.selected_index = Some(self.entries.visible_entries.len() - 1);
             }
-        } else if self.selected_index.is_none() {
-            self.selected_index = Some(0);
+        } else if self.selection.selected_index.is_none() {
+            self.selection.selected_index = Some(0);
         }
         self.validate_selection();
     }
@@ -202,20 +188,20 @@ impl Heike {
 
         // Separate directories and files if dirs_first is enabled
         let (mut dirs, mut files): (Vec<_>, Vec<_>) = self
-            .visible_entries
+            .entries.visible_entries
             .drain(..)
             .partition(|e| e.is_dir);
 
         // Sort both groups by the selected criteria
         let sort_fn = |a: &FileEntry, b: &FileEntry| -> std::cmp::Ordering {
-            let cmp = match self.sort_options.sort_by {
+            let cmp = match self.ui.sort_options.sort_by {
                 SortBy::Name => a.name.cmp(&b.name),
                 SortBy::Size => a.size.cmp(&b.size),
                 SortBy::Modified => a.modified.cmp(&b.modified),
                 SortBy::Extension => a.extension.cmp(&b.extension),
             };
 
-            match self.sort_options.sort_order {
+            match self.ui.sort_options.sort_order {
                 SortOrder::Ascending => cmp,
                 SortOrder::Descending => cmp.reverse(),
             }
@@ -225,18 +211,18 @@ impl Heike {
         files.sort_by(sort_fn);
 
         // Combine back, with dirs first if enabled
-        if self.sort_options.dirs_first {
-            self.visible_entries.extend(dirs);
-            self.visible_entries.extend(files);
+        if self.ui.sort_options.dirs_first {
+            self.entries.visible_entries.extend(dirs);
+            self.entries.visible_entries.extend(files);
         } else {
-            self.visible_entries.extend(files);
-            self.visible_entries.extend(dirs);
+            self.entries.visible_entries.extend(files);
+            self.entries.visible_entries.extend(dirs);
         }
     }
 
     fn setup_watcher(&mut self, ctx: &egui::Context) {
         // Only setup if path changed
-        if self.watched_path.as_ref() == Some(&self.current_path) {
+        if self.watched_path.as_ref() == Some(&self.navigation.current_path) {
             return;
         }
 
@@ -252,18 +238,18 @@ impl Heike {
         }) {
             Ok(mut watcher) => {
                 // Watch the current directory
-                if let Err(e) = watcher.watch(&self.current_path, RecursiveMode::NonRecursive) {
-                    self.error_message =
+                if let Err(e) = watcher.watch(&self.navigation.current_path, RecursiveMode::NonRecursive) {
+                    self.ui.error_message =
                         Some((format!("Failed to watch directory: {}", e), Instant::now()));
                     self.watcher = None;
                     self.watched_path = None;
                 } else {
                     self.watcher = Some(Box::new(watcher));
-                    self.watched_path = Some(self.current_path.clone());
+                    self.watched_path = Some(self.navigation.current_path.clone());
                 }
             }
             Err(e) => {
-                self.error_message =
+                self.ui.error_message =
                     Some((format!("Failed to create watcher: {}", e), Instant::now()));
                 self.watcher = None;
                 self.watched_path = None;
@@ -290,60 +276,60 @@ impl Heike {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
                 IoResult::DirectoryLoaded { path, entries } => {
-                    if path != self.current_path {
+                    if path != self.navigation.current_path {
                         continue;
                     }
 
-                    self.all_entries = entries;
-                    self.is_loading = false;
+                    self.entries.all_entries = entries;
+                    self.ui.is_loading = false;
                     self.apply_filter();
 
                     // If there's a pending selection path, find and select it
-                    if let Some(pending_path) = self.pending_selection_path.take() {
+                    if let Some(pending_path) = self.navigation.pending_selection_path.take() {
                         if let Some(idx) = self
-                            .visible_entries
+            .entries.visible_entries
                             .iter()
                             .position(|e| e.path == pending_path)
                         {
-                            self.selected_index = Some(idx);
+                            self.selection.selected_index = Some(idx);
                         }
                     }
 
                     // Validate selection after loading
-                    if let Some(idx) = self.selected_index {
-                        if idx >= self.visible_entries.len() && !self.visible_entries.is_empty() {
-                            self.selected_index = Some(self.visible_entries.len() - 1);
+                    if let Some(idx) = self.selection.selected_index {
+                        if idx >= self.entries.visible_entries.len() && !self.entries.visible_entries.is_empty() {
+                            self.selection.selected_index = Some(self.entries.visible_entries.len() - 1);
                         }
                     }
                 }
                 IoResult::ParentLoaded(entries) => {
-                    self.parent_entries = entries;
+                    self.entries.parent_entries = entries;
                 }
                 IoResult::SearchCompleted(results) => {
-                    self.search_in_progress = false;
+                    self.ui.search_in_progress = false;
                     let result_count = results.len();
-                    self.mode = AppMode::SearchResults {
-                        query: self.search_query.clone(),
+                    self.mode.set_mode(AppMode::SearchResults {
+                        query: self.ui.search_query.clone(),
                         results,
                         selected_index: 0,
-                    };
-                    self.info_message = Some((
+                    });
+                    self.ui.info_message = Some((
                         format!(
                             "Found {} matches in {} files",
-                            result_count, self.search_file_count
+                            result_count, self.ui.search_file_count
                         ),
                         Instant::now(),
                     ));
                 }
                 IoResult::SearchProgress(count) => {
-                    self.search_file_count = count;
+                    self.ui.search_file_count = count;
                 }
                 IoResult::Error(msg) => {
-                    self.is_loading = false;
-                    self.search_in_progress = false;
-                    self.error_message = Some((msg, Instant::now()));
-                    self.all_entries.clear();
-                    self.visible_entries.clear();
+                    self.ui.is_loading = false;
+                    self.ui.search_in_progress = false;
+                    self.ui.error_message = Some((msg, Instant::now()));
+                    self.entries.all_entries.clear();
+                    self.entries.visible_entries.clear();
                 }
             }
         }
@@ -354,106 +340,106 @@ impl Heike {
     pub(crate) fn navigate_to(&mut self, path: PathBuf) {
         if path.is_dir() {
             // Save current selection before navigating away
-            if let Some(idx) = self.selected_index {
-                self.directory_selections
-                    .insert(self.current_path.clone(), idx);
+            if let Some(idx) = self.selection.selected_index {
+                self.selection.directory_selections
+                    .insert(self.navigation.current_path.clone(), idx);
             }
 
-            self.current_path = path.clone();
+            self.navigation.current_path = path.clone();
 
-            if self.history_index < self.history.len() - 1 {
-                self.history.truncate(self.history_index + 1);
+            if self.navigation.history_index < self.navigation.history.len() - 1 {
+                self.navigation.history.truncate(self.navigation.history_index + 1);
             }
-            self.history.push(path);
-            self.history_index = self.history.len() - 1;
+            self.navigation.history.push(path);
+            self.navigation.history_index = self.navigation.history.len() - 1;
 
             self.finish_navigation();
         } else if let Err(e) = open::that(&path) {
-            self.error_message = Some((format!("Could not open file: {}", e), Instant::now()));
+            self.ui.error_message = Some((format!("Could not open file: {}", e), Instant::now()));
         }
     }
 
     pub(crate) fn navigate_up(&mut self) {
-        if let Some(parent) = self.current_path.parent() {
+        if let Some(parent) = self.navigation.current_path.parent() {
             // Save current selection before navigating up
-            if let Some(idx) = self.selected_index {
-                self.directory_selections
-                    .insert(self.current_path.clone(), idx);
+            if let Some(idx) = self.selection.selected_index {
+                self.selection.directory_selections
+                    .insert(self.navigation.current_path.clone(), idx);
             }
             // When navigating to parent, select the child directory we came from
-            self.pending_selection_path = Some(self.current_path.clone());
+            self.navigation.pending_selection_path = Some(self.navigation.current_path.clone());
             self.navigate_to(parent.to_path_buf());
         }
     }
 
     pub(crate) fn navigate_back(&mut self) {
-        if self.history_index == 0 {
+        if self.navigation.history_index == 0 {
             return;
         }
 
-        if let Some(idx) = self.selected_index {
-            self.directory_selections
-                .insert(self.current_path.clone(), idx);
+        if let Some(idx) = self.selection.selected_index {
+            self.selection.directory_selections
+                .insert(self.navigation.current_path.clone(), idx);
         }
 
-        let mut idx = self.history_index;
+        let mut idx = self.navigation.history_index;
         while idx > 0 {
             idx -= 1;
-            let target = self.history[idx].clone();
+            let target = self.navigation.history[idx].clone();
             if target.is_dir() {
-                self.history_index = idx;
-                self.current_path = target;
+                self.navigation.history_index = idx;
+                self.navigation.current_path = target;
                 self.finish_navigation();
                 return;
             } else {
-                self.history.remove(idx);
-                self.history_index -= 1;
+                self.navigation.history.remove(idx);
+                self.navigation.history_index -= 1;
             }
         }
 
-        self.error_message = Some(("Previous directory no longer exists".into(), Instant::now()));
+        self.ui.error_message = Some(("Previous directory no longer exists".into(), Instant::now()));
     }
 
     pub(crate) fn navigate_forward(&mut self) {
-        if self.history_index >= self.history.len() - 1 {
+        if self.navigation.history_index >= self.navigation.history.len() - 1 {
             return;
         }
 
-        if let Some(idx) = self.selected_index {
-            self.directory_selections
-                .insert(self.current_path.clone(), idx);
+        if let Some(idx) = self.selection.selected_index {
+            self.selection.directory_selections
+                .insert(self.navigation.current_path.clone(), idx);
         }
 
-        let idx = self.history_index + 1;
+        let idx = self.navigation.history_index + 1;
         loop {
-            if idx >= self.history.len() {
+            if idx >= self.navigation.history.len() {
                 break;
             }
-            let target = self.history[idx].clone();
+            let target = self.navigation.history[idx].clone();
             if target.is_dir() {
-                self.history_index = idx;
-                self.current_path = target;
+                self.navigation.history_index = idx;
+                self.navigation.current_path = target;
                 self.finish_navigation();
                 return;
             }
-            self.history.remove(idx);
+            self.navigation.history.remove(idx);
         }
 
-        self.error_message = Some(("Next directory no longer exists".into(), Instant::now()));
+        self.ui.error_message = Some(("Next directory no longer exists".into(), Instant::now()));
     }
 
     fn finish_navigation(&mut self) {
-        self.command_buffer.clear();
-        self.mode = AppMode::Normal;
-        self.multi_selection.clear();
+        self.mode.command_buffer.clear();
+        self.mode.set_mode(AppMode::Normal);
+        self.selection.multi_selection.clear();
         // Restore saved selection for this directory, or default to 0
-        self.selected_index = self
-            .directory_selections
-            .get(&self.current_path)
+        self.selection.selected_index = self
+            .selection.directory_selections
+            .get(&self.navigation.current_path)
             .copied()
             .or(Some(0));
         // Re-enable autoscroll when navigating to ensure view centers on selection
-        self.disable_autoscroll = false;
+        self.selection.disable_autoscroll = false;
         self.request_refresh();
     }
 
@@ -463,12 +449,12 @@ impl Heike {
         self.clipboard.clear();
         self.clipboard_op = Some(op);
 
-        if !self.multi_selection.is_empty() {
-            self.clipboard = self.multi_selection.clone();
-            self.mode = AppMode::Normal;
-            self.multi_selection.clear();
-        } else if let Some(idx) = self.selected_index {
-            if let Some(entry) = self.visible_entries.get(idx) {
+        if !self.selection.multi_selection.is_empty() {
+            self.clipboard = self.selection.multi_selection.clone();
+            self.mode.set_mode(AppMode::Normal);
+            self.selection.multi_selection.clear();
+        } else if let Some(idx) = self.selection.selected_index {
+            if let Some(entry) = self.entries.visible_entries.get(idx) {
                 self.clipboard.insert(entry.path.clone());
             }
         }
@@ -478,7 +464,7 @@ impl Heike {
         } else {
             "Cut"
         };
-        self.info_message = Some((
+        self.ui.info_message = Some((
             format!("{} {} files", op_text, self.clipboard.len()),
             Instant::now(),
         ));
@@ -505,7 +491,7 @@ impl Heike {
             }
 
             if let Some(name) = src.file_name() {
-                let dest = self.current_path.join(name);
+                let dest = self.navigation.current_path.join(name);
                 if src.is_dir() {
                     if op == ClipboardOp::Cut {
                         if let Err(e) = fs::rename(src, &dest) {
@@ -535,9 +521,9 @@ impl Heike {
         }
 
         if !errors.is_empty() {
-            self.error_message = Some((errors.join(" | "), Instant::now()));
+            self.ui.error_message = Some((errors.join(" | "), Instant::now()));
         } else {
-            self.info_message = Some((format!("Processed {} files", count), Instant::now()));
+            self.ui.info_message = Some((format!("Processed {} files", count), Instant::now()));
         }
 
         if op == ClipboardOp::Cut {
@@ -548,10 +534,10 @@ impl Heike {
     }
 
     pub(crate) fn perform_delete(&mut self) {
-        let targets = if !self.multi_selection.is_empty() {
-            self.multi_selection.clone()
-        } else if let Some(idx) = self.selected_index {
-            if let Some(entry) = self.visible_entries.get(idx) {
+        let targets = if !self.selection.multi_selection.is_empty() {
+            self.selection.multi_selection.clone()
+        } else if let Some(idx) = self.selection.selected_index {
+            if let Some(entry) = self.entries.visible_entries.get(idx) {
                 HashSet::from([entry.path.clone()])
             } else {
                 HashSet::new()
@@ -571,54 +557,119 @@ impl Heike {
             }
         }
 
-        self.mode = AppMode::Normal;
-        self.multi_selection.clear();
+        self.mode.set_mode(AppMode::Normal);
+        self.selection.multi_selection.clear();
         self.request_refresh();
 
         if error_count > 0 {
-            self.error_message = Some((
+            self.ui.error_message = Some((
                 format!("Failed to delete {} item(s)", error_count),
                 Instant::now(),
             ));
         } else {
-            self.info_message = Some(("Items moved to trash".into(), Instant::now()));
+            self.ui.info_message = Some(("Items moved to trash".into(), Instant::now()));
         }
     }
 
     pub(crate) fn perform_rename(&mut self) {
-        if let Some(idx) = self.selected_index {
-            if let Some(entry) = self.visible_entries.get(idx) {
-                let new_name = self.command_buffer.trim();
+        if let Some(idx) = self.selection.selected_index {
+            if let Some(entry) = self.entries.visible_entries.get(idx) {
+                let new_name = self.mode.command_buffer.trim();
                 if !new_name.is_empty() {
                     let new_path = entry.path.parent().unwrap().join(new_name);
                     if let Err(e) = fs::rename(&entry.path, &new_path) {
-                        self.error_message =
+                        self.ui.error_message =
                             Some((format!("Rename failed: {}", e), Instant::now()));
                     } else {
-                        self.info_message = Some(("Renamed successfully".into(), Instant::now()));
+                        self.ui.info_message = Some(("Renamed successfully".into(), Instant::now()));
                     }
                 }
             }
         }
-        self.mode = AppMode::Normal;
-        self.command_buffer.clear();
+        self.mode.set_mode(AppMode::Normal);
+        self.mode.command_buffer.clear();
         self.request_refresh();
     }
 
     // --- Selection Validation ---
 
     fn validate_selection(&mut self) {
-        if let Some(idx) = self.selected_index {
-            if self.visible_entries.is_empty() {
-                self.selected_index = None;
-            } else if idx >= self.visible_entries.len() {
-                self.selected_index = Some(self.visible_entries.len() - 1);
+        if let Some(idx) = self.selection.selected_index {
+            if self.entries.visible_entries.is_empty() {
+                self.selection.selected_index = None;
+            } else if idx >= self.entries.visible_entries.len() {
+                self.selection.selected_index = Some(self.entries.visible_entries.len() - 1);
             }
         }
     }
 
+    /// Save current UI settings to configuration file
+    fn save_settings(&mut self) {
+        use crate::config::{Config, ThemeConfig, PanelConfig, UiConfig, FontConfig};
+
+        let theme_mode = match self.ui.theme {
+            Theme::Light => "light",
+            Theme::Dark => "dark",
+        };
+
+        let config = Config {
+            theme: ThemeConfig {
+                mode: theme_mode.to_string(),
+            },
+            font: FontConfig {
+                font_size: 12.0,
+                icon_size: 14.0,
+            },
+            panel: PanelConfig {
+                parent_width: self.ui.panel_widths[0],
+                preview_width: self.ui.panel_widths[1],
+            },
+            ui: UiConfig {
+                show_hidden: self.ui.show_hidden,
+                sort_by: match self.ui.sort_options.sort_by {
+                    crate::state::SortBy::Name => "name",
+                    crate::state::SortBy::Size => "size",
+                    crate::state::SortBy::Modified => "modified",
+                    crate::state::SortBy::Extension => "extension",
+                }.to_string(),
+                sort_order: match self.ui.sort_options.sort_order {
+                    crate::state::SortOrder::Ascending => "asc",
+                    crate::state::SortOrder::Descending => "desc",
+                }.to_string(),
+                dirs_first: self.ui.sort_options.dirs_first,
+            },
+            bookmarks: self.bookmarks.clone(),
+        };
+
+        let _ = config.save();
+        self.ui.last_settings_save = Instant::now();
+    }
+
     // --- Drag and Drop Handling ---
     // (Currently handled in the eframe::App update method)
+
+    /// Helper to get or compute cached preview content for a file
+    /// Returns cached content if available and file hasn't changed
+    fn get_or_compute_preview(&self, entry: &FileEntry, compute: impl FnOnce() -> String) -> String {
+        // Get current file's modified time
+        if let Ok(metadata) = fs::metadata(&entry.path) {
+            if let Ok(mtime) = metadata.modified() {
+                // Try to get from cache
+                let cached = self.preview_cache.borrow().get(&entry.path, mtime);
+                if let Some(content) = cached {
+                    return content;
+                }
+
+                // Not in cache, compute and store
+                let content = compute();
+                self.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), mtime);
+                return content;
+            }
+        }
+
+        // Fallback if metadata read fails
+        compute()
+    }
 
     fn render_preview(
         &self,
@@ -626,7 +677,7 @@ impl Heike {
         next_navigation: &std::cell::RefCell<Option<PathBuf>>,
         pending_selection: &std::cell::RefCell<Option<PathBuf>>,
     ) {
-        let idx = match self.selected_index {
+        let idx = match self.selection.selected_index {
             Some(i) => i,
             None => {
                 ui.centered_and_justified(|ui| {
@@ -635,7 +686,7 @@ impl Heike {
                 return;
             }
         };
-        let entry = match self.visible_entries.get(idx) {
+        let entry = match self.entries.visible_entries.get(idx) {
             Some(e) => e,
             None => return,
         };
@@ -645,27 +696,29 @@ impl Heike {
             egui::RichText::new(format!("{} {}", entry.get_icon(), entry.display_name())).heading(),
         );
         ui.add_space(5.0);
+        ui.label(format!("Type: {}", entry.get_file_type()));
         style::truncated_label(
             ui,
             format!("Size: {}", bytesize::ByteSize(entry.size)),
         );
         let datetime: DateTime<Local> = entry.modified.into();
         ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
+        ui.label(format!("Permissions: {}", entry.get_permissions_string()));
         ui.separator();
 
         if entry.is_dir {
             // Show directory contents in preview pane
-            if self.last_selection_change.elapsed() <= Duration::from_millis(200) {
+            if self.selection.last_selection_change.elapsed() <= Duration::from_millis(200) {
                 ui.centered_and_justified(|ui| {
                     ui.spinner();
                 });
                 return;
             }
 
-            match read_directory(&entry.path, self.show_hidden) {
+            match read_directory(&entry.path, self.ui.show_hidden) {
                 Ok(entries) => {
                     let accent = egui::Color32::from_rgb(120, 180, 255);
-                    let highlighted_index = self.directory_selections.get(&entry.path).copied();
+                    let highlighted_index = self.selection.directory_selections.get(&entry.path).copied();
 
                     egui::ScrollArea::vertical()
                         .id_salt("preview_dir")
@@ -729,7 +782,7 @@ impl Heike {
             }
             return;
         }
-        if self.last_selection_change.elapsed() <= Duration::from_millis(200) {
+        if self.selection.last_selection_change.elapsed() <= Duration::from_millis(200) {
             ui.centered_and_justified(|ui| {
                 ui.spinner();
             });
@@ -913,7 +966,7 @@ impl Heike {
             }
 
             if !is_likely_binary(&entry.path) {
-                view::preview::render_syntax_highlighted(ui, entry, &self.syntax_set, &self.theme_set, self.theme);
+                view::preview::render_syntax_highlighted(ui, entry, &self.syntax_set, &self.theme_set, self.ui.theme);
                 return;
             }
         }
@@ -939,10 +992,10 @@ impl Heike {
 
     // Note: execute_command method is missing but needed for handle_input to compile
     pub(crate) fn execute_command(&mut self, _ctx: &egui::Context) {
-        let parts: Vec<&str> = self.command_buffer.trim().split_whitespace().collect();
+        let parts: Vec<&str> = self.mode.command_buffer.trim().split_whitespace().collect();
         if parts.is_empty() {
-            self.mode = AppMode::Normal;
-            self.command_buffer.clear();
+            self.mode.set_mode(AppMode::Normal);
+            self.mode.command_buffer.clear();
             return;
         }
 
@@ -952,18 +1005,18 @@ impl Heike {
             }
             "mkdir" => {
                 if parts.len() < 2 {
-                    self.error_message = Some(("Usage: mkdir <name>".into(), Instant::now()));
+                    self.ui.error_message = Some(("Usage: mkdir <name>".into(), Instant::now()));
                 } else {
                     let dir_name = parts[1..].join(" ");
-                    let new_dir = self.current_path.join(&dir_name);
+                    let new_dir = self.navigation.current_path.join(&dir_name);
                     match fs::create_dir(&new_dir) {
                         Ok(_) => {
-                            self.info_message =
+                            self.ui.info_message =
                                 Some((format!("Created directory: {}", dir_name), Instant::now()));
                             self.request_refresh();
                         }
                         Err(e) => {
-                            self.error_message =
+                            self.ui.error_message =
                                 Some((format!("Failed to create directory: {}", e), Instant::now()));
                         }
                     }
@@ -971,52 +1024,86 @@ impl Heike {
             }
             "touch" => {
                 if parts.len() < 2 {
-                    self.error_message = Some(("Usage: touch <filename>".into(), Instant::now()));
+                    self.ui.error_message = Some(("Usage: touch <filename>".into(), Instant::now()));
                 } else {
                     let file_name = parts[1..].join(" ");
-                    let new_file = self.current_path.join(&file_name);
+                    let new_file = self.navigation.current_path.join(&file_name);
                     match fs::File::create(&new_file) {
                         Ok(_) => {
-                            self.info_message =
+                            self.ui.info_message =
                                 Some((format!("Created file: {}", file_name), Instant::now()));
                             self.request_refresh();
                         }
                         Err(e) => {
-                            self.error_message =
+                            self.ui.error_message =
                                 Some((format!("Failed to create file: {}", e), Instant::now()));
                         }
                     }
                 }
             }
+            "cd" => {
+                if parts.len() < 2 {
+                    // Navigate to home directory if no argument provided
+                    if let Some(home) = directories::UserDirs::new() {
+                        self.navigate_to(home.home_dir().to_path_buf());
+                    }
+                } else {
+                    let path_str = parts[1..].join(" ");
+                    let path = if path_str.starts_with('~') {
+                        if let Some(home) = directories::UserDirs::new() {
+                            let rest = &path_str[1..];
+                            home.home_dir().join(rest)
+                        } else {
+                            PathBuf::from(path_str)
+                        }
+                    } else if path_str.starts_with('/') {
+                        PathBuf::from(path_str)
+                    } else {
+                        self.navigation.current_path.join(path_str)
+                    };
+                    self.navigate_to(path);
+                }
+            }
+            "help" => {
+                self.ui.info_message = Some((
+                    "Commands: q/quit, mkdir <name>, touch <file>, cd <path>, help".into(),
+                    Instant::now()
+                ));
+            }
             _ => {
-                self.error_message =
-                    Some((format!("Unknown command: {}", parts[0]), Instant::now()));
+                self.ui.error_message =
+                    Some((format!("Unknown command: {}. Type 'help' for available commands.", parts[0]), Instant::now()));
             }
         }
 
-        self.mode = AppMode::Normal;
-        self.command_buffer.clear();
+        self.mode.set_mode(AppMode::Normal);
+        self.mode.command_buffer.clear();
     }
 }
 
 impl eframe::App for Heike {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Apply theme
-        match self.theme {
+        match self.ui.theme {
             Theme::Light => ctx.set_visuals(egui::Visuals::light()),
             Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
         }
 
         // Auto-dismiss old messages
-        if let Some((_, time)) = &self.error_message {
+        if let Some((_, time)) = &self.ui.error_message {
             if time.elapsed() > Duration::from_secs(style::MESSAGE_TIMEOUT_SECS) {
-                self.error_message = None;
+                self.ui.error_message = None;
             }
         }
-        if let Some((_, time)) = &self.info_message {
+        if let Some((_, time)) = &self.ui.info_message {
             if time.elapsed() > Duration::from_secs(style::MESSAGE_TIMEOUT_SECS) {
-                self.info_message = None;
+                self.ui.info_message = None;
             }
+        }
+
+        // Periodically save settings (every 10 seconds)
+        if self.ui.last_settings_save.elapsed() > Duration::from_secs(10) {
+            self.save_settings();
         }
 
         self.setup_watcher(ctx);
@@ -1031,11 +1118,11 @@ impl eframe::App for Heike {
             }
         });
 
-        if self.mode == AppMode::Filtering {
-            let old_len = self.visible_entries.len();
+        if self.mode.mode == AppMode::Filtering {
+            let old_len = self.entries.visible_entries.len();
             self.apply_filter();
-            if self.visible_entries.len() != old_len {
-                self.last_selection_change = Instant::now();
+            if self.entries.visible_entries.len() != old_len {
+                self.selection.last_selection_change = Instant::now();
             }
         }
 
@@ -1070,7 +1157,7 @@ impl eframe::App for Heike {
                     .max_width(breadcrumb_width)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            let components: Vec<_> = self.current_path.components().collect();
+                            let components: Vec<_> = self.navigation.current_path.components().collect();
                             let mut path_acc = PathBuf::new();
                             for component in components {
                                 path_acc.push(component);
@@ -1086,12 +1173,12 @@ impl eframe::App for Heike {
 
                 // Right controls in remaining space
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.checkbox(&mut self.show_hidden, "Hidden (.)").changed() {
+                    if ui.checkbox(&mut self.ui.show_hidden, "Hidden (.)").changed() {
                         self.request_refresh();
                     }
 
                     // Theme toggle
-                    let theme_icon = match self.theme {
+                    let theme_icon = match self.ui.theme {
                         Theme::Light => "🌙",
                         Theme::Dark => "☀",
                     };
@@ -1100,18 +1187,18 @@ impl eframe::App for Heike {
                         .on_hover_text("Toggle theme")
                         .clicked()
                     {
-                        self.theme = match self.theme {
+                        self.ui.theme = match self.ui.theme {
                             Theme::Light => Theme::Dark,
                             Theme::Dark => Theme::Light,
                         };
                     }
 
                     if ui.button("?").clicked() {
-                        self.mode = AppMode::Help;
+                        self.mode.set_mode(AppMode::Help);
                     }
 
                     // Mode Indicator
-                    match &self.mode {
+                    match &self.mode.mode {
                         AppMode::Normal => {
                             ui.label("NORMAL");
                         }
@@ -1153,13 +1240,13 @@ impl eframe::App for Heike {
                 // Item counts
                 ui.label(format!(
                     "{}/{} items",
-                    self.visible_entries.len(),
-                    self.all_entries.len()
+                    self.entries.visible_entries.len(),
+                    self.entries.all_entries.len()
                 ));
                 
                 // Show current selected file info
-                if let Some(idx) = self.selected_index {
-                    if let Some(entry) = self.visible_entries.get(idx) {
+                if let Some(idx) = self.selection.selected_index {
+                    if let Some(entry) = self.entries.visible_entries.get(idx) {
                         ui.separator();
                         let type_str = if entry.is_dir { "dir" } else { "file" };
                         ui.label(format!(
@@ -1172,30 +1259,30 @@ impl eframe::App for Heike {
                 
                 // Show current path
                 ui.separator();
-                style::truncated_label(ui, format!("{}", self.current_path.display()));
+                style::truncated_label(ui, format!("{}", self.navigation.current_path.display()));
 
-                if self.is_loading {
+                if self.ui.is_loading {
                     ui.spinner();
                 }
 
-                if let Some((msg, _)) = &self.info_message {
+                if let Some((msg, _)) = &self.ui.info_message {
                     ui.colored_label(egui::Color32::GREEN, msg);
                 }
-                if let Some((err, _)) = &self.error_message {
+                if let Some((err, _)) = &self.ui.error_message {
                     ui.colored_label(egui::Color32::RED, format!(" | {}", err));
                 }
 
-                if !self.multi_selection.is_empty() {
+                if !self.selection.multi_selection.is_empty() {
                     ui.separator();
                     // Calculate total size of selected files
-                    let total_size: u64 = self.all_entries.iter()
-                        .filter(|e| self.multi_selection.contains(&e.path))
+                    let total_size: u64 = self.entries.all_entries.iter()
+                        .filter(|e| self.selection.multi_selection.contains(&e.path))
                         .map(|e| e.size)
                         .sum();
                     ui.colored_label(
                         egui::Color32::LIGHT_BLUE,
                         format!("{} selected ({})", 
-                            self.multi_selection.len(),
+                            self.selection.multi_selection.len(),
                             bytesize::ByteSize(total_size)
                         ),
                     );
@@ -1208,7 +1295,7 @@ impl eframe::App for Heike {
             ref query,
             ref results,
             selected_index,
-        } = self.mode
+        } = self.mode.mode
         {
             // Track click selection
             let next_result_selection = std::cell::RefCell::new(None);
@@ -1360,13 +1447,13 @@ impl eframe::App for Heike {
                     ref query,
                     ref results,
                     selected_index: _,
-                } = self.mode
+                } = self.mode.mode
                 {
-                    self.mode = AppMode::SearchResults {
+                    self.mode.set_mode(AppMode::SearchResults {
                         query: query.clone(),
                         results: results.clone(),
                         selected_index: new_index,
-                    };
+                    });
                 }
             }
         } else {
@@ -1399,11 +1486,11 @@ impl eframe::App for Heike {
                 // Strip-based layout with three panes and dividers
                 use egui_extras::{Size, StripBuilder};
                 StripBuilder::new(ui)
-                    .size(Size::exact(self.panel_widths[0]).at_least(style::PARENT_MIN))
+                    .size(Size::exact(self.ui.panel_widths[0]).at_least(style::PARENT_MIN))
                     .size(Size::exact(style::DIVIDER_WIDTH))
                     .size(Size::remainder())
                     .size(Size::exact(style::DIVIDER_WIDTH))
-                    .size(Size::exact(self.panel_widths[1]).at_least(style::PREVIEW_MIN))
+                    .size(Size::exact(self.ui.panel_widths[1]).at_least(style::PREVIEW_MIN))
                     .horizontal(|mut strip| {
                         strip.cell(|ui| self.render_parent_pane(ui, &next_navigation));
                         strip.cell(|ui| self.render_divider(ui, 0));
@@ -1430,10 +1517,10 @@ impl eframe::App for Heike {
         } // End of else block for normal file browser view
 
         if let Some(idx) = next_selection.into_inner() {
-            self.selected_index = Some(idx);
+            self.selection.selected_index = Some(idx);
         }
         if let Some(pending) = pending_selection.into_inner() {
-            self.pending_selection_path = Some(pending);
+            self.navigation.pending_selection_path = Some(pending);
         }
         if let Some(path) = next_navigation.into_inner() {
             self.navigate_to(path);

@@ -10,8 +10,11 @@ mod view;
 use app::Heike;
 use config::Config;
 use eframe::egui;
+use std::path::PathBuf;
 
 fn main() -> eframe::Result<()> {
+    // Parse CLI arguments for starting directory
+    let start_dir = std::env::args().nth(1).map(PathBuf::from);
     // Load the app icon
     let icon_bytes = include_bytes!("../assets/heike_icon.png");
     let icon_image = image::load_from_memory(icon_bytes)
@@ -66,7 +69,8 @@ fn main() -> eframe::Result<()> {
 
             cc.egui_ctx.set_fonts(fonts);
 
-            Ok(Box::new(Heike::new(cc.egui_ctx.clone(), config)))
+            Ok(Box::new(Heike::new(cc.egui_ctx.clone(), config, start_dir)))
         }),
     )
 }
+

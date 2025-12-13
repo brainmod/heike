@@ -9,7 +9,7 @@ use eframe::egui;
 
 impl Heike {
     pub(crate) fn render_help_modal(&mut self, ctx: &egui::Context) {
-        if self.mode.mode == AppMode::Help {
+        if self.mode == AppMode::Help {
             egui::Window::new("Help")
                 .collapsible(false)
                 .resizable(false)
@@ -27,17 +27,14 @@ impl Heike {
                             ui.label("k / Up");
                             ui.label("Previous Item");
                             ui.end_row();
-                            ui.label("h / Left Arrow / Backspace / -");
+                            ui.label("h / Left Arrow / Backspace");
                             ui.label("Go to Parent");
                             ui.end_row();
-                            ui.label("l / Right Arrow / e");
-                            ui.label("Enter Directory / Open File");
+                            ui.label("l / Right Arrow");
+                            ui.label("Enter Directory");
                             ui.end_row();
                             ui.label("Enter");
                             ui.label("Open File / Enter Dir");
-                            ui.end_row();
-                            ui.label("Shift+E");
-                            ui.label("Archive Info");
                             ui.end_row();
                             ui.label("gg / G");
                             ui.label("Top / Bottom");
@@ -101,7 +98,7 @@ impl Heike {
                         }
                         ui.add_space(10.0);
                         if ui.button("Close").clicked() {
-                            self.mode.set_mode(AppMode::Normal);
+                            self.mode = AppMode::Normal;
                         }
                     });
                 });
@@ -109,7 +106,7 @@ impl Heike {
     }
 
     pub(crate) fn render_search_input_modal(&mut self, ctx: &egui::Context) {
-        if self.mode.mode == AppMode::SearchInput {
+        if self.mode == AppMode::SearchInput {
             egui::Window::new("Content Search")
                 .collapsible(false)
                 .resizable(false)
@@ -121,55 +118,55 @@ impl Heike {
                         ui.label("Search for content in files:");
                         ui.add_space(5.0);
 
-                        let response = ui.text_edit_singleline(&mut self.ui.search_query);
-                        if self.mode.focus_input {
+                        let response = ui.text_edit_singleline(&mut self.search_query);
+                        if self.focus_input {
                             response.request_focus();
-                            self.mode.focus_input = false;
+                            self.focus_input = false;
                         }
 
                         ui.add_space(10.0);
                         ui.label("Options:");
                         ui.checkbox(
-                            &mut self.ui.search_options.case_sensitive,
+                            &mut self.search_options.case_sensitive,
                             "Case sensitive",
                         );
-                        ui.checkbox(&mut self.ui.search_options.use_regex, "Use regex");
+                        ui.checkbox(&mut self.search_options.use_regex, "Use regex");
                         ui.checkbox(
-                            &mut self.ui.search_options.search_hidden,
+                            &mut self.search_options.search_hidden,
                             "Search hidden files",
                         );
-                        ui.checkbox(&mut self.ui.search_options.search_pdfs, "Search PDFs");
+                        ui.checkbox(&mut self.search_options.search_pdfs, "Search PDFs");
                         ui.checkbox(
-                            &mut self.ui.search_options.search_archives,
+                            &mut self.search_options.search_archives,
                             "Search archives",
                         );
 
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
                             if ui.button("Search").clicked()
-                                && !self.ui.search_query.is_empty()
+                                && !self.search_query.is_empty()
                             {
-                                self.ui.search_in_progress = true;
-                                self.ui.search_file_count = 0;
+                                self.search_in_progress = true;
+                                self.search_file_count = 0;
                                 let _ = self.command_tx.send(IoCommand::SearchContent {
-                                    query: self.ui.search_query.clone(),
-                                    root_path: self.navigation.current_path.clone(),
-                                    options: self.ui.search_options.clone(),
+                                    query: self.search_query.clone(),
+                                    root_path: self.current_path.clone(),
+                                    options: self.search_options.clone(),
                                 });
-                                self.mode.set_mode(AppMode::Normal);
+                                self.mode = AppMode::Normal;
                             }
                             if ui.button("Cancel").clicked() {
-                                self.mode.set_mode(AppMode::Normal);
+                                self.mode = AppMode::Normal;
                             }
                         });
 
-                        if self.ui.search_in_progress {
+                        if self.search_in_progress {
                             ui.add_space(10.0);
                             ui.horizontal(|ui| {
                                 ui.spinner();
                                 ui.label(format!(
                                     "Searching... ({} files)",
-                                    self.ui.search_file_count
+                                    self.search_file_count
                                 ));
                             });
                         }
@@ -180,7 +177,7 @@ impl Heike {
 
     pub(crate) fn render_input_modal(&mut self, ctx: &egui::Context) {
         if matches!(
-            self.mode.mode,
+            self.mode,
             AppMode::Command | AppMode::Filtering | AppMode::Rename
         ) {
             egui::Area::new("input_popup".into())
@@ -189,7 +186,7 @@ impl Heike {
                 .show(ctx, |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_min_width(400.0);
-                        let prefix = match self.mode.mode {
+                        let prefix = match self.mode {
                             AppMode::Rename => "Rename:",
                             AppMode::Filtering => "/",
                             _ => ":",
@@ -197,10 +194,10 @@ impl Heike {
                         ui.horizontal(|ui| {
                             ui.label(prefix);
                             let response =
-                                ui.text_edit_singleline(&mut self.mode.command_buffer);
-                            if self.mode.focus_input {
+                                ui.text_edit_singleline(&mut self.command_buffer);
+                            if self.focus_input {
                                 response.request_focus();
-                                self.mode.focus_input = false;
+                                self.focus_input = false;
                             }
                         });
                     });

@@ -129,6 +129,69 @@ impl FileEntry {
             }
         }
     }
+
+    pub fn get_file_type(&self) -> String {
+        if self.is_symlink {
+            return "Symbolic Link".to_string();
+        }
+
+        if self.is_dir {
+            return "Directory".to_string();
+        }
+
+        match self.extension.as_str() {
+            // Archives
+            "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar" => "Archive",
+            // Images
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico" => "Image",
+            // Videos
+            "mp4" | "mkv" | "mov" | "avi" | "webm" | "flv" | "wmv" => "Video",
+            // Audio
+            "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "wma" => "Audio",
+            // Documents
+            "pdf" => "PDF Document",
+            "doc" | "docx" => "Word Document",
+            "xls" | "xlsx" => "Excel Spreadsheet",
+            "ppt" | "pptx" => "PowerPoint Presentation",
+            // Code
+            "py" | "pyc" => "Python",
+            "js" | "mjs" => "JavaScript",
+            "ts" | "tsx" => "TypeScript",
+            "jsx" => "JSX",
+            "rs" => "Rust",
+            "c" | "h" => "C",
+            "cpp" | "cc" | "cxx" | "hpp" => "C++",
+            "java" => "Java",
+            "go" => "Go",
+            "rb" => "Ruby",
+            "php" => "PHP",
+            "swift" => "Swift",
+            "kt" => "Kotlin",
+            // Data Formats
+            "json" => "JSON",
+            "yaml" | "yml" => "YAML",
+            "xml" => "XML",
+            "toml" => "TOML",
+            "sql" | "db" | "sqlite" => "Database",
+            // Markup
+            "md" | "markdown" => "Markdown",
+            "html" | "htm" => "HTML",
+            "css" | "scss" | "sass" | "less" => "Stylesheet",
+            // Shell
+            "sh" | "bash" | "zsh" | "fish" => "Shell Script",
+            "bat" | "cmd" | "ps1" => "Batch/PowerShell Script",
+            // Config
+            "conf" | "config" | "cfg" | "ini" | "env" => "Configuration",
+            "gitignore" | "git" => "Git",
+            // Text
+            "txt" | "log" => "Text",
+            // Executables
+            "exe" | "msi" => "Executable",
+            // Default
+            "" => "File",
+            _ => "File",
+        }.to_string()
+    }
 }
 
 #[cfg(unix)]

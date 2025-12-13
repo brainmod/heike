@@ -27,11 +27,11 @@ impl Heike {
             let delta = response.drag_delta().x;
             match index {
                 0 => {
-                    self.ui.panel_widths[0] =
-                        (self.ui.panel_widths[0] + delta).clamp(style::PARENT_MIN, style::PARENT_MAX)
+                    self.panel_widths[0] =
+                        (self.panel_widths[0] + delta).clamp(style::PARENT_MIN, style::PARENT_MAX)
                 }
                 1 => {
-                    self.ui.panel_widths[1] = (self.ui.panel_widths[1] - delta)
+                    self.panel_widths[1] = (self.panel_widths[1] - delta)
                         .clamp(style::PREVIEW_MIN, style::PREVIEW_MAX)
                 }
                 _ => {}
@@ -66,9 +66,9 @@ impl Heike {
                     .column(Column::auto().at_least(30.0))
                     .column(Column::remainder().clip(true))
                     .body(|body| {
-                        body.rows(24.0, self.entries.parent_entries.len(), |mut row| {
-                            let entry = &self.entries.parent_entries[row.index()];
-                            let is_active = entry.path == self.navigation.current_path;
+                        body.rows(24.0, self.parent_entries.len(), |mut row| {
+                            let entry = &self.parent_entries[row.index()];
+                            let is_active = entry.path == self.current_path;
 
                             let icon_color = if is_active { accent } else { default_color };
 
@@ -110,7 +110,7 @@ impl Heike {
                 i.smooth_scroll_delta != egui::Vec2::ZERO || i.raw_scroll_delta != egui::Vec2::ZERO
             })
         {
-            self.selection.disable_autoscroll = true;
+            self.disable_autoscroll = true;
         }
 
         egui::ScrollArea::vertical()
@@ -126,8 +126,8 @@ impl Heike {
                     .column(Column::remainder().clip(true));
 
                 // Only scroll to selected row if autoscroll is not disabled
-                if !self.selection.disable_autoscroll {
-                    if let Some(idx) = self.selection.selected_index {
+                if !self.disable_autoscroll {
+                    if let Some(idx) = self.selected_index {
                         table = table.scroll_to_row(idx, None);
                     }
                 }
@@ -142,11 +142,11 @@ impl Heike {
                         });
                     })
                     .body(|body| {
-                        body.rows(24.0, self.entries.visible_entries.len(), |mut row| {
+                        body.rows(24.0, self.visible_entries.len(), |mut row| {
                             let row_index = row.index();
-                            let entry = &self.entries.visible_entries[row_index];
-                            let is_focused = self.selection.selected_index == Some(row_index);
-                            let is_multi_selected = self.selection.multi_selection.contains(&entry.path);
+                            let entry = &self.visible_entries[row_index];
+                            let is_focused = self.selected_index == Some(row_index);
+                            let is_multi_selected = self.multi_selection.contains(&entry.path);
                             let is_cut = self.clipboard_op == Some(ClipboardOp::Cut)
                                 && self.clipboard.contains(&entry.path);
 
@@ -205,7 +205,7 @@ impl Heike {
 
                                 // Double click to open/navigate
                                 if response.double_clicked() {
-                                    if let Some(entry) = self.entries.visible_entries.get(row_index) {
+                                    if let Some(entry) = self.visible_entries.get(row_index) {
                                         *next_navigation.borrow_mut() = Some(entry.path.clone());
                                     }
                                 }
@@ -232,7 +232,7 @@ impl Heike {
                                                 app.clipboard.clear();
                                                 app.clipboard.insert(path);
                                                 app.clipboard_op = Some(ClipboardOp::Copy);
-                                                app.ui.info_message =
+                                                app.info_message =
                                                     Some(("Copied 1 file".into(), Instant::now()));
                                             }));
                                         ui.close();
@@ -245,7 +245,7 @@ impl Heike {
                                                 app.clipboard.clear();
                                                 app.clipboard.insert(path);
                                                 app.clipboard_op = Some(ClipboardOp::Cut);
-                                                app.ui.info_message =
+                                                app.info_message =
                                                     Some(("Cut 1 file".into(), Instant::now()));
                                             }));
                                         ui.close();
@@ -266,9 +266,9 @@ impl Heike {
                                         let name = entry_clone.name.clone();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
-                                                app.mode.command_buffer = name;
-                                                app.mode.set_mode(AppMode::Rename);
-                                                app.mode.focus_input = true;
+                                                app.command_buffer = name;
+                                                app.mode = AppMode::Rename;
+                                                app.focus_input = true;
                                             }));
                                         ui.close();
                                     }
@@ -277,7 +277,7 @@ impl Heike {
                                         *next_selection.borrow_mut() = Some(row_index);
                                         *context_action.borrow_mut() =
                                             Some(Box::new(|app: &mut Self| {
-                                                app.mode.set_mode(AppMode::DeleteConfirm);
+                                                app.mode = AppMode::DeleteConfirm;
                                             }));
                                         ui.close();
                                     }
@@ -291,7 +291,7 @@ impl Heike {
                                         let perms = entry_clone.get_permissions_string();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
-                                                app.ui.info_message =
+                                                app.info_message =
                                                     Some((
                                                         format!(
                                             "{} | {} | {} | Modified: {}",
