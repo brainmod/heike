@@ -335,6 +335,40 @@ impl Heike {
                 }
             }
         }
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::E)) {
+            // 'e' key: open file with default app
+            if let Some(idx) = self.selection.selected_index {
+                if let Some(entry) = self.entries.visible_entries.get(idx) {
+                    // For directories, enter them (same as 'l')
+                    if entry.is_dir {
+                        let path = entry.path.clone();
+                        self.navigate_to(path);
+                    } else {
+                        // For files, open with default app
+                        let _ = open::that(&entry.path);
+                    }
+                }
+            }
+        }
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::E) && i.modifiers.shift) {
+            // Shift+E: open command mode for extraction (user can use ':' commands)
+            // For now, just show a message since extraction requires special handling
+            if let Some(idx) = self.selection.selected_index {
+                if let Some(entry) = self.entries.visible_entries.get(idx) {
+                    if matches!(entry.extension.as_str(), "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz") {
+                        self.ui.info_message = Some((
+                            "Use ':extract <path>' command to extract this archive".into(),
+                            Instant::now()
+                        ));
+                    } else {
+                        self.ui.error_message = Some((
+                            "Selected file is not an archive".into(),
+                            Instant::now()
+                        ));
+                    }
+                }
+            }
+        }
 
         // 6. Navigation (j/k/arrows)
         if self.entries.visible_entries.is_empty() {
@@ -365,6 +399,7 @@ impl Heike {
             i.key_pressed(egui::Key::Backspace)
                 || i.key_pressed(egui::Key::H)
                 || i.key_pressed(egui::Key::ArrowLeft)
+                || i.key_pressed(egui::Key::Minus)  // '-' for parent (vim standard)
         }) {
             self.navigate_up();
         }
