@@ -270,14 +270,16 @@ impl Heike {
                                         let size = entry_clone.size;
                                         let modified = entry_clone.modified;
                                         let is_dir = entry_clone.is_dir;
+                                        let perms = entry_clone.get_permissions_string();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
                                                 app.info_message =
                                                     Some((
                                                         format!(
-                                            "{} | {} | Modified: {}",
+                                            "{} | {} | {} | Modified: {}",
                                             if is_dir { "Directory" } else { "File" },
                                             bytesize::ByteSize(size),
+                                            perms,
                                             chrono::DateTime::<chrono::Local>::from(modified)
                                                 .format("%Y-%m-%d %H:%M")
                                         ),

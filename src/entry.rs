@@ -2,6 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[derive(Clone, Debug)]
 pub struct FileEntry {
     pub path: PathBuf,
@@ -96,4 +99,42 @@ impl FileEntry {
             self.name.clone()
         }
     }
+
+    pub fn get_permissions_string(&self) -> String {
+        #[cfg(unix)]
+        {
+            match fs::metadata(&self.path) {
+                Ok(metadata) => {
+                    let mode = metadata.permissions().mode();
+                    let owner = format_perms((mode >> 6) & 0o7);
+                    let group = format_perms((mode >> 3) & 0o7);
+                    let others = format_perms(mode & 0o7);
+                    format!("{}{}{}", owner, group, others)
+                }
+                Err(_) => "unknown".to_string(),
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            match fs::metadata(&self.path) {
+                Ok(metadata) => {
+                    if metadata.permissions().readonly() {
+                        "read-only".to_string()
+                    } else {
+                        "read-write".to_string()
+                    }
+                }
+                Err(_) => "unknown".to_string(),
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn format_perms(mode: u32) -> String {
+    let r = if mode & 0o4 != 0 { "r" } else { "-" };
+    let w = if mode & 0o2 != 0 { "w" } else { "-" };
+    let x = if mode & 0o1 != 0 { "x" } else { "-" };
+    format!("{}{}{}", r, w, x)
 }
