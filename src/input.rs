@@ -184,6 +184,8 @@ impl Heike {
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            // Clear stale 'g' press timer when exiting modes
+            self.selection.last_g_press = None;
             self.mode.set_mode(AppMode::Normal);
             self.mode.command_buffer.clear();
             self.selection.multi_selection.clear();
@@ -569,6 +571,8 @@ impl Heike {
         }
 
         if changed {
+            // Clear stale 'g' press timer when any other navigation action occurs
+            self.selection.last_g_press = None;
             self.selection.selected_index = Some(new_index);
             self.selection.last_selection_change = Instant::now();
             self.selection.disable_autoscroll = false; // Re-enable autoscroll on keyboard navigation
