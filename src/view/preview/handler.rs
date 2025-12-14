@@ -2,7 +2,9 @@
 
 use crate::entry::FileEntry;
 use crate::style::Theme;
+use crate::view::preview::PreviewCache;
 use eframe::egui;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -19,6 +21,7 @@ pub struct PreviewContext<'a> {
     pub directory_selections: &'a HashMap<PathBuf, usize>,
     pub next_navigation: &'a std::cell::RefCell<Option<PathBuf>>,
     pub pending_selection: &'a std::cell::RefCell<Option<PathBuf>>,
+    pub preview_cache: &'a RefCell<PreviewCache>,
 }
 
 /// Trait for file preview handlers

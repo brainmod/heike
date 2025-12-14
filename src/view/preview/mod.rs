@@ -143,6 +143,7 @@ pub fn render_preview(
     theme: Theme,
     next_navigation: &std::cell::RefCell<Option<PathBuf>>,
     pending_selection: &std::cell::RefCell<Option<PathBuf>>,
+    preview_cache: &std::cell::RefCell<PreviewCache>,
 ) {
     // Render file metadata header
     render_preview_header(ui, entry);
@@ -165,6 +166,7 @@ pub fn render_preview(
         directory_selections,
         next_navigation,
         pending_selection,
+        preview_cache,
     };
 
     // Try to render using registry

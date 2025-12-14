@@ -67,8 +67,20 @@ impl PreviewHandler for TextPreviewHandler {
             return Ok(());
         }
 
-        let data = fs::read(&entry.path).map_err(|e| format!("Read error: {}", e))?;
-        let content = String::from_utf8_lossy(&data);
+        // Try to get cached content first
+        let content = if let Some(cached) = context.preview_cache.borrow().get(&entry.path, entry.modified) {
+            // Cache hit - use cached content
+            cached
+        } else {
+            // Cache miss - read from disk
+            let data = fs::read(&entry.path).map_err(|e| format!("Read error: {}", e))?;
+            let content = String::from_utf8_lossy(&data).to_string();
+
+            // Store in cache for future use
+            context.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), entry.modified);
+
+            content
+        };
 
         let syntax = context
             .syntax_set

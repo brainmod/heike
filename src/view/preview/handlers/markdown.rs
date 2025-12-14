@@ -28,7 +28,7 @@ impl PreviewHandler for MarkdownPreviewHandler {
         &self,
         ui: &mut egui::Ui,
         entry: &FileEntry,
-        _context: &PreviewContext,
+        context: &PreviewContext,
     ) -> Result<(), String> {
         if entry.size > style::MAX_PREVIEW_SIZE {
             ui.centered_and_justified(|ui| {
@@ -46,8 +46,20 @@ impl PreviewHandler for MarkdownPreviewHandler {
             return Ok(());
         }
 
-        let content = fs::read_to_string(&entry.path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
+        // Try to get cached content first
+        let content = if let Some(cached) = context.preview_cache.borrow().get(&entry.path, entry.modified) {
+            // Cache hit - use cached content
+            cached
+        } else {
+            // Cache miss - read from disk
+            let content = fs::read_to_string(&entry.path)
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+
+            // Store in cache for future use
+            context.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), entry.modified);
+
+            content
+        };
 
         egui::ScrollArea::vertical()
             .id_salt("preview_md")

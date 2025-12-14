@@ -1039,6 +1039,7 @@ impl Heike {
             self.ui.theme,
             next_navigation,
             pending_selection,
+            &self.preview_cache,
         );
     }
 
