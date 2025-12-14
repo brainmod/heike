@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Application configuration
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -12,6 +12,8 @@ pub struct Config {
     pub ui: UiConfig,
     #[serde(default)]
     pub bookmarks: BookmarksConfig,
+    #[serde(default)]
+    pub previews: PreviewConfig,
 }
 
 /// Theme configuration
@@ -57,6 +59,32 @@ pub struct UiConfig {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct BookmarksConfig {
     pub shortcuts: HashMap<String, String>,
+}
+
+/// Preview configuration - control which preview handlers are enabled
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PreviewConfig {
+    /// List of enabled preview handlers
+    /// Available: "directory", "image", "markdown", "archive", "pdf", "office", "audio", "text", "binary"
+    pub enabled: Vec<String>,
+}
+
+impl Default for PreviewConfig {
+    fn default() -> Self {
+        PreviewConfig {
+            enabled: vec![
+                "directory".to_string(),
+                "image".to_string(),
+                "markdown".to_string(),
+                "archive".to_string(),
+                "pdf".to_string(),
+                "office".to_string(),
+                "audio".to_string(),
+                "text".to_string(),
+                "binary".to_string(),
+            ],
+        }
+    }
 }
 
 impl BookmarksConfig {
@@ -111,6 +139,7 @@ impl Default for Config {
                 dirs_first: true,
             },
             bookmarks: BookmarksConfig { shortcuts },
+            previews: PreviewConfig::default(),
         }
     }
 }

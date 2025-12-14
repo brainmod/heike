@@ -51,4 +51,27 @@ impl SortOptions {
     pub fn toggle_dirs_first(&mut self) {
         self.dirs_first = !self.dirs_first;
     }
+
+    /// Get a user-friendly string representation of current sort options
+    pub fn display_string(&self) -> String {
+        let sort_field = match self.sort_by {
+            SortBy::Name => "Name",
+            SortBy::Size => "Size",
+            SortBy::Modified => "Modified",
+            SortBy::Extension => "Ext",
+        };
+
+        let order_icon = match self.sort_order {
+            SortOrder::Ascending => "↑",
+            SortOrder::Descending => "↓",
+        };
+
+        let dirs = if self.dirs_first { "Dirs↑" } else { "" };
+
+        if self.dirs_first {
+            format!("Sort: {} {} | {}", sort_field, order_icon, dirs)
+        } else {
+            format!("Sort: {} {}", sort_field, order_icon)
+        }
+    }
 }

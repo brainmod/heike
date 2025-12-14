@@ -24,7 +24,11 @@ pub enum IoResult {
     },
     ParentLoaded(Vec<FileEntry>),
     SearchCompleted(Vec<SearchResult>),
-    SearchProgress(usize),
+    SearchProgress {
+        files_searched: usize,
+        files_skipped: usize,
+        errors: usize,
+    },
     Error(String),
 }
 

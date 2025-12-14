@@ -1,18 +1,16 @@
 use crate::config::BookmarksConfig;
 use crate::entry::FileEntry;
-use crate::io::{fuzzy_match, is_likely_binary, read_directory, spawn_worker, IoCommand, IoResult};
+use crate::io::{fuzzy_match, spawn_worker, IoCommand, IoResult};
 use crate::state::{
-    AppMode, ClipboardOp, SearchOptions, SortOptions, NavigationState, SelectionState,
-    EntryState, UIState, ModeState,
+    AppMode, ClipboardOp, NavigationState, SelectionState, EntryState, UIState, ModeState, TabsManager,
 };
 use crate::style::{self, Theme};
 use crate::view;
 
-use chrono::{DateTime, Local};
 use eframe::egui;
 use notify::{Event, RecursiveMode, Watcher};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -21,15 +19,26 @@ use std::time::{Duration, Instant};
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
+enum TabAction {
+    SwitchTo(usize),
+    Close(usize),
+    New,
+}
+
 pub struct Heike {
-    // Logical state groupings
+    // Tabs management
+    pub tabs: TabsManager,
+
+    // Current tab state (synced with active tab)
     pub navigation: NavigationState,
     pub selection: SelectionState,
     pub entries: EntryState,
+
+    // Global state
     pub ui: UIState,
     pub mode: ModeState,
 
-    // Clipboard operations
+    // Clipboard operations (shared across tabs)
     pub clipboard: HashSet<PathBuf>,
     pub clipboard_op: Option<ClipboardOp>,
 
@@ -45,8 +54,15 @@ pub struct Heike {
     pub theme_set: ThemeSet,
     pub bookmarks: BookmarksConfig,
 
+    // Preview system
+    pub preview_registry: view::PreviewRegistry,
+
     // Caching (interior mutability for preview cache)
     pub preview_cache: RefCell<view::PreviewCache>,
+
+    // Parent directory cache to avoid redundant reads
+    pub cached_parent_path: Option<PathBuf>,
+    pub cached_show_hidden: bool,
 }
 impl Heike {
     pub fn new(ctx: egui::Context, config: crate::config::Config, cli_start_dir: Option<PathBuf>) -> Self {
@@ -99,7 +115,15 @@ impl Heike {
         ui_state.show_hidden = config.ui.show_hidden;
         ui_state.panel_widths = [config.panel.parent_width, config.panel.preview_width];
 
+        // Create preview registry and configure enabled handlers
+        let mut preview_registry = view::create_default_registry();
+        preview_registry.set_enabled_handlers(config.previews.enabled.clone());
+
+        // Initialize tabs manager
+        let tabs = TabsManager::new(start_path.clone());
+
         let mut app = Self {
+            tabs,
             navigation: NavigationState::new(start_path.clone()),
             selection: SelectionState::new(),
             entries: EntryState::new(),
@@ -115,12 +139,106 @@ impl Heike {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
             bookmarks: config.bookmarks.clone(),
+            preview_registry,
             preview_cache: RefCell::new(view::PreviewCache::new()),
+            cached_parent_path: None,
+            cached_show_hidden: false,
         };
 
         app.request_refresh();
         app
     }
+
+    // --- Tab Management ---
+
+    fn save_current_tab_state(&mut self) {
+        if let Some(tab) = self.tabs.get_active_mut() {
+            tab.current_path = self.navigation.current_path.clone();
+            tab.history = self.navigation.history.clone();
+            tab.history_index = self.navigation.history_index;
+            tab.all_entries = self.entries.all_entries.clone();
+            tab.visible_entries = self.entries.visible_entries.clone();
+            tab.parent_entries = self.entries.parent_entries.clone();
+            tab.selected_index = self.selection.selected_index;
+            tab.directory_selections = self.selection.directory_selections.clone();
+            tab.pending_selection_path = self.navigation.pending_selection_path.clone();
+            tab.update_label();
+        }
+    }
+
+    fn load_active_tab_state(&mut self) {
+        if let Some(tab) = self.tabs.get_active() {
+            self.navigation.current_path = tab.current_path.clone();
+            self.navigation.history = tab.history.clone();
+            self.navigation.history_index = tab.history_index;
+            self.entries.all_entries = tab.all_entries.clone();
+            self.entries.visible_entries = tab.visible_entries.clone();
+            self.entries.parent_entries = tab.parent_entries.clone();
+            self.selection.selected_index = tab.selected_index;
+            self.selection.directory_selections = tab.directory_selections.clone();
+            self.navigation.pending_selection_path = tab.pending_selection_path.clone();
+        }
+    }
+
+    pub(crate) fn switch_to_tab(&mut self, index: usize) {
+        if index >= self.tabs.tab_count() {
+            return;
+        }
+        // Save current tab state
+        self.save_current_tab_state();
+        // Switch to new tab
+        self.tabs.switch_to_tab(index);
+        // Load new tab state
+        self.load_active_tab_state();
+        // Refresh the new tab's directory
+        self.request_refresh();
+    }
+
+    pub(crate) fn new_tab(&mut self, path: Option<PathBuf>) {
+        let path = path.unwrap_or_else(|| self.navigation.current_path.clone());
+        // Save current tab state
+        self.save_current_tab_state();
+        // Create new tab
+        self.tabs.new_tab(path);
+        // Load new tab state
+        self.load_active_tab_state();
+        // Refresh the new tab's directory
+        self.request_refresh();
+    }
+
+    pub(crate) fn close_current_tab(&mut self) {
+        if self.tabs.tab_count() <= 1 {
+            self.ui.set_error("Cannot close the last tab".into());
+            return;
+        }
+        // Close the tab (this automatically switches to another tab)
+        if self.tabs.close_current_tab() {
+            // Load the new active tab's state
+            self.load_active_tab_state();
+            // Refresh
+            self.request_refresh();
+        }
+    }
+
+    pub(crate) fn next_tab(&mut self) {
+        if self.tabs.tab_count() <= 1 {
+            return;
+        }
+        self.save_current_tab_state();
+        self.tabs.next_tab();
+        self.load_active_tab_state();
+    }
+
+    pub(crate) fn prev_tab(&mut self) {
+        if self.tabs.tab_count() <= 1 {
+            return;
+        }
+        self.save_current_tab_state();
+        self.tabs.prev_tab();
+        self.load_active_tab_state();
+    }
+
+    // --- Directory and File Operations ---
 
     pub(crate) fn request_refresh(&mut self) {
         self.ui.is_loading = true;
@@ -131,12 +249,25 @@ impl Heike {
             self.ui.show_hidden,
         ));
         if let Some(parent) = self.navigation.current_path.parent() {
-            let _ = self.command_tx.send(IoCommand::LoadParent(
-                parent.to_path_buf(),
-                self.ui.show_hidden,
-            ));
+            let parent_path = parent.to_path_buf();
+
+            // Only reload parent if it's different from the cached one or show_hidden changed
+            let cache_valid = self.cached_parent_path.as_ref() == Some(&parent_path)
+                && self.cached_show_hidden == self.ui.show_hidden;
+
+            if !cache_valid {
+                let _ = self.command_tx.send(IoCommand::LoadParent(
+                    parent_path.clone(),
+                    self.ui.show_hidden,
+                ));
+                // Mark that we've requested this parent (will be updated when result arrives)
+                self.cached_parent_path = Some(parent_path);
+                self.cached_show_hidden = self.ui.show_hidden;
+            }
+            // else: parent is cached and settings unchanged, skip redundant read
         } else {
             self.entries.parent_entries.clear();
+            self.cached_parent_path = None;
         }
     }
 
@@ -260,14 +391,92 @@ impl Heike {
     fn process_watcher_events(&mut self) {
         while let Ok(event_result) = self.watcher_rx.try_recv() {
             match event_result {
-                Ok(_event) => {
-                    // File system changed, trigger refresh
-                    self.request_refresh();
+                Ok(event) => {
+                    // Handle file system events incrementally
+                    self.handle_fs_event(event);
                 }
                 Err(e) => {
                     // Watcher error, but don't show it to avoid spam
                     eprintln!("Watcher error: {}", e);
                 }
+            }
+        }
+    }
+
+    fn handle_fs_event(&mut self, event: Event) {
+        use notify::EventKind;
+
+        // Check if event affects the cached parent directory
+        if let Some(cached_parent) = &self.cached_parent_path {
+            let affects_parent = event.paths.iter().any(|p| {
+                p.parent() == Some(cached_parent.as_path())
+                    || p.as_path() == cached_parent.as_path()
+            });
+            if affects_parent {
+                // Invalidate parent cache - parent directory has changed
+                self.cached_parent_path = None;
+            }
+        }
+
+        // Only handle events for the current directory
+        let in_current_dir = event.paths.iter().any(|p| {
+            p.parent() == Some(self.navigation.current_path.as_path())
+                || p.as_path() == self.navigation.current_path.as_path()
+        });
+
+        if !in_current_dir {
+            return;
+        }
+
+        match event.kind {
+            EventKind::Create(_) => {
+                // File/directory created - add to entries
+                for path in &event.paths {
+                    if path.parent() == Some(self.navigation.current_path.as_path()) {
+                        if let Some(new_entry) = FileEntry::from_path(path.clone()) {
+                            // Check if entry already exists
+                            if !self.entries.all_entries.iter().any(|e| &e.path == path) {
+                                self.entries.all_entries.push(new_entry);
+                            }
+                        }
+                    }
+                }
+                self.apply_filter(); // Re-sort and filter
+            }
+            EventKind::Remove(_) => {
+                // File/directory removed - remove from entries
+                for path in &event.paths {
+                    self.entries.all_entries.retain(|e| &e.path != path);
+                    self.entries.visible_entries.retain(|e| &e.path != path);
+                    self.entries.parent_entries.retain(|e| &e.path != path);
+                    // Remove from multi-selection if present
+                    self.selection.multi_selection.remove(path);
+                }
+                self.apply_filter();
+                self.validate_selection();
+            }
+            EventKind::Modify(_) => {
+                // File modified - update entry metadata
+                for path in &event.paths {
+                    if let Some(updated_entry) = FileEntry::from_path(path.clone()) {
+                        // Update in all_entries
+                        if let Some(entry) = self.entries.all_entries.iter_mut().find(|e| &e.path == path) {
+                            *entry = updated_entry.clone();
+                        }
+                        // Update in visible_entries
+                        if let Some(entry) = self.entries.visible_entries.iter_mut().find(|e| &e.path == path) {
+                            *entry = updated_entry.clone();
+                        }
+                        // Update in parent_entries
+                        if let Some(entry) = self.entries.parent_entries.iter_mut().find(|e| &e.path == path) {
+                            *entry = updated_entry;
+                        }
+                    }
+                }
+            }
+            _ => {
+                // For other events (move, etc.), do a full refresh to be safe
+                self.request_refresh();
             }
         }
     }
@@ -313,21 +522,24 @@ impl Heike {
                         results,
                         selected_index: 0,
                     });
-                    self.ui.info_message = Some((
-                        format!(
-                            "Found {} matches in {} files",
-                            result_count, self.ui.search_file_count
-                        ),
-                        Instant::now(),
+                    self.ui.set_info(format!(
+                        "Found {} matches in {} files",
+                        result_count, self.ui.search_file_count
                     ));
                 }
-                IoResult::SearchProgress(count) => {
-                    self.ui.search_file_count = count;
+                IoResult::SearchProgress {
+                    files_searched,
+                    files_skipped,
+                    errors,
+                } => {
+                    self.ui.search_file_count = files_searched;
+                    self.ui.search_files_skipped = files_skipped;
+                    self.ui.search_errors = errors;
                 }
                 IoResult::Error(msg) => {
                     self.ui.is_loading = false;
                     self.ui.search_in_progress = false;
-                    self.ui.error_message = Some((msg, Instant::now()));
+                    self.ui.set_error(msg);
                     self.entries.all_entries.clear();
                     self.entries.visible_entries.clear();
                 }
@@ -355,7 +567,7 @@ impl Heike {
 
             self.finish_navigation();
         } else if let Err(e) = open::that(&path) {
-            self.ui.error_message = Some((format!("Could not open file: {}", e), Instant::now()));
+            self.ui.set_error(format!("Could not open file: {}", e));
         }
     }
 
@@ -397,7 +609,7 @@ impl Heike {
             }
         }
 
-        self.ui.error_message = Some(("Previous directory no longer exists".into(), Instant::now()));
+        self.ui.set_error("Previous directory no longer exists".into());
     }
 
     pub(crate) fn navigate_forward(&mut self) {
@@ -425,7 +637,7 @@ impl Heike {
             self.navigation.history.remove(idx);
         }
 
-        self.ui.error_message = Some(("Next directory no longer exists".into(), Instant::now()));
+        self.ui.set_error("Next directory no longer exists".into());
     }
 
     fn finish_navigation(&mut self) {
@@ -464,10 +676,7 @@ impl Heike {
         } else {
             "Cut"
         };
-        self.ui.info_message = Some((
-            format!("{} {} files", op_text, self.clipboard.len()),
-            Instant::now(),
-        ));
+        self.ui.set_info(format!("{} {} files", op_text, self.clipboard.len()));
     }
 
     pub(crate) fn paste_clipboard(&mut self) {
@@ -521,9 +730,9 @@ impl Heike {
         }
 
         if !errors.is_empty() {
-            self.ui.error_message = Some((errors.join(" | "), Instant::now()));
+            self.ui.set_error(errors.join(" | "));
         } else {
-            self.ui.info_message = Some((format!("Processed {} files", count), Instant::now()));
+            self.ui.set_info(format!("Processed {} files", count));
         }
 
         if op == ClipboardOp::Cut {
@@ -562,12 +771,9 @@ impl Heike {
         self.request_refresh();
 
         if error_count > 0 {
-            self.ui.error_message = Some((
-                format!("Failed to delete {} item(s)", error_count),
-                Instant::now(),
-            ));
+            self.ui.set_error(format!("Failed to delete {} item(s)", error_count));
         } else {
-            self.ui.info_message = Some(("Items moved to trash".into(), Instant::now()));
+            self.ui.set_info("Items moved to trash".into());
         }
     }
 
@@ -578,10 +784,9 @@ impl Heike {
                 if !new_name.is_empty() {
                     let new_path = entry.path.parent().unwrap().join(new_name);
                     if let Err(e) = fs::rename(&entry.path, &new_path) {
-                        self.ui.error_message =
-                            Some((format!("Rename failed: {}", e), Instant::now()));
+                        self.ui.set_error(format!("Rename failed: {}", e));
                     } else {
-                        self.ui.info_message = Some(("Renamed successfully".into(), Instant::now()));
+                        self.ui.set_info("Renamed successfully".into());
                     }
                 }
             }
@@ -589,6 +794,131 @@ impl Heike {
         self.mode.set_mode(AppMode::Normal);
         self.mode.command_buffer.clear();
         self.request_refresh();
+    }
+
+    pub(crate) fn enter_bulk_rename_mode(&mut self) {
+        // Determine which files to rename
+        let files_to_rename: Vec<PathBuf> = if !self.selection.multi_selection.is_empty() {
+            // Use multi-selection if available
+            self.selection
+                .multi_selection
+                .iter()
+                .cloned()
+                .collect()
+        } else if let Some(idx) = self.selection.selected_index {
+            // Use current selection if no multi-selection
+            if let Some(entry) = self.entries.visible_entries.get(idx) {
+                vec![entry.path.clone()]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        if files_to_rename.is_empty() {
+            self.ui.set_error("No files selected for bulk rename".into());
+            return;
+        }
+
+        // Create edit buffer with one filename per line
+        let edit_buffer = files_to_rename
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        self.mode.set_mode(AppMode::BulkRename {
+            original_paths: files_to_rename,
+            edit_buffer,
+            cursor_line: 0,
+        });
+        self.mode.focus_input = true;
+    }
+
+    pub(crate) fn apply_bulk_rename(&mut self) {
+        if let AppMode::BulkRename {
+            original_paths,
+            edit_buffer,
+            ..
+        } = &self.mode.mode
+        {
+            let new_names: Vec<&str> = edit_buffer.lines().collect();
+
+            // Validation: number of lines must match number of files
+            if new_names.len() != original_paths.len() {
+                self.ui.set_error(format!(
+                    "Line count mismatch: {} files but {} names",
+                    original_paths.len(),
+                    new_names.len()
+                ));
+                return;
+            }
+
+            // Validation: no empty names
+            if new_names.iter().any(|n| n.trim().is_empty()) {
+                self.ui.set_error("Empty filename not allowed".into());
+                return;
+            }
+
+            // Validation: no duplicate names
+            let mut seen = std::collections::HashSet::new();
+            for name in &new_names {
+                if !seen.insert(name.trim()) {
+                    self.ui.set_error(format!("Duplicate filename: {}", name.trim()));
+                    return;
+                }
+            }
+
+            // Perform renames
+            let mut success_count = 0;
+            let mut errors = Vec::new();
+
+            for (old_path, new_name) in original_paths.iter().zip(new_names.iter()) {
+                let new_name = new_name.trim();
+                if let Some(parent) = old_path.parent() {
+                    let new_path = parent.join(new_name);
+
+                    // Skip if name hasn't changed
+                    if let Some(old_name) = old_path.file_name().and_then(|n| n.to_str()) {
+                        if old_name == new_name {
+                            success_count += 1;
+                            continue;
+                        }
+                    }
+
+                    // Check if target already exists (unless it's a case-only change)
+                    if new_path.exists() && new_path != *old_path {
+                        errors.push(format!("{}: target already exists", new_name));
+                        continue;
+                    }
+
+                    match fs::rename(old_path, &new_path) {
+                        Ok(()) => success_count += 1,
+                        Err(e) => errors.push(format!("{}: {}", new_name, e)),
+                    }
+                }
+            }
+
+            // Clear multi-selection after bulk rename
+            self.selection.multi_selection.clear();
+
+            // Show results
+            if !errors.is_empty() {
+                self.ui.set_error(format!(
+                    "Renamed {}/{} files. Errors: {}",
+                    success_count,
+                    original_paths.len(),
+                    errors.join(", ")
+                ));
+            } else {
+                self.ui.set_info(format!("Successfully renamed {} file(s)", success_count));
+            }
+
+            self.mode.set_mode(AppMode::Normal);
+            self.request_refresh();
+        }
     }
 
     // --- Selection Validation ---
@@ -639,6 +969,9 @@ impl Heike {
                 dirs_first: self.ui.sort_options.dirs_first,
             },
             bookmarks: self.bookmarks.clone(),
+            previews: crate::config::PreviewConfig {
+                enabled: self.preview_registry.enabled_handler_names(),
+            },
         };
 
         let _ = config.save();
@@ -647,29 +980,6 @@ impl Heike {
 
     // --- Drag and Drop Handling ---
     // (Currently handled in the eframe::App update method)
-
-    /// Helper to get or compute cached preview content for a file
-    /// Returns cached content if available and file hasn't changed
-    fn get_or_compute_preview(&self, entry: &FileEntry, compute: impl FnOnce() -> String) -> String {
-        // Get current file's modified time
-        if let Ok(metadata) = fs::metadata(&entry.path) {
-            if let Ok(mtime) = metadata.modified() {
-                // Try to get from cache
-                let cached = self.preview_cache.borrow().get(&entry.path, mtime);
-                if let Some(content) = cached {
-                    return content;
-                }
-
-                // Not in cache, compute and store
-                let content = compute();
-                self.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), mtime);
-                return content;
-            }
-        }
-
-        // Fallback if metadata read fails
-        compute()
-    }
 
     fn render_preview(
         &self,
@@ -691,297 +1001,21 @@ impl Heike {
             None => return,
         };
 
-        style::truncated_label(
+        // Use modular preview system (header is rendered inside)
+        view::render_preview(
             ui,
-            egui::RichText::new(format!("{} {}", entry.get_icon(), entry.display_name())).heading(),
+            entry,
+            &self.preview_registry,
+            self.ui.show_hidden,
+            self.selection.last_selection_change,
+            &self.selection.directory_selections,
+            &self.syntax_set,
+            &self.theme_set,
+            self.ui.theme,
+            next_navigation,
+            pending_selection,
+            &self.preview_cache,
         );
-        ui.add_space(5.0);
-        ui.label(format!("Type: {}", entry.get_file_type()));
-        style::truncated_label(
-            ui,
-            format!("Size: {}", bytesize::ByteSize(entry.size)),
-        );
-        let datetime: DateTime<Local> = entry.modified.into();
-        ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
-        ui.label(format!("Permissions: {}", entry.get_permissions_string()));
-        ui.separator();
-
-        if entry.is_dir {
-            // Show directory contents in preview pane
-            if self.selection.last_selection_change.elapsed() <= Duration::from_millis(200) {
-                ui.centered_and_justified(|ui| {
-                    ui.spinner();
-                });
-                return;
-            }
-
-            match read_directory(&entry.path, self.ui.show_hidden) {
-                Ok(entries) => {
-                    let accent = egui::Color32::from_rgb(120, 180, 255);
-                    let highlighted_index = self.selection.directory_selections.get(&entry.path).copied();
-
-                    egui::ScrollArea::vertical()
-                        .id_salt("preview_dir")
-                        .auto_shrink([false, false])
-                        .max_height(ui.available_height())
-                        .show(ui, |ui| {
-                            ui.set_max_width(ui.available_width());
-                            let default_color = ui.visuals().text_color();
-                            use egui_extras::{Column, TableBuilder};
-                            TableBuilder::new(ui)
-                                .striped(true)
-                                .resizable(false)
-                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                .column(Column::auto().at_least(30.0))
-                                .column(Column::remainder().clip(true))
-                                .body(|body| {
-                                    body.rows(24.0, entries.len(), |mut row| {
-                                        let row_index = row.index();
-                                        let preview_entry = &entries[row_index];
-                                        let is_highlighted = highlighted_index == Some(row_index);
-                                        let text_color = if is_highlighted || preview_entry.is_dir {
-                                            accent
-                                        } else {
-                                            default_color
-                                        };
-                                        row.col(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(preview_entry.get_icon())
-                                                    .size(14.0)
-                                                    .color(text_color),
-                                            );
-                                        });
-                                        row.col(|ui| {
-                                            let response = style::truncated_label_with_sense(
-                                                ui,
-                                                egui::RichText::new(preview_entry.display_name())
-                                                    .color(text_color),
-                                                egui::Sense::click(),
-                                            );
-                                            if response.clicked() {
-                                                // Navigate to the directory being previewed (the currently selected item)
-                                                // and set the clicked item to be selected after navigation
-                                                *next_navigation.borrow_mut() =
-                                                    Some(entry.path.clone());
-                                                *pending_selection.borrow_mut() =
-                                                    Some(preview_entry.path.clone());
-                                            }
-                                        });
-                                    });
-                                });
-                        });
-                }
-                Err(e) => {
-                    ui.centered_and_justified(|ui| {
-                        ui.colored_label(
-                            egui::Color32::RED,
-                            format!("Cannot read directory: {}", e),
-                        );
-                    });
-                }
-            }
-            return;
-        }
-        if self.selection.last_selection_change.elapsed() <= Duration::from_millis(200) {
-            ui.centered_and_justified(|ui| {
-                ui.spinner();
-            });
-            return;
-        }
-
-        // Image preview
-        if matches!(
-            entry.extension.as_str(),
-            "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "ico"
-        ) {
-            let uri = format!("file://{}", entry.path.display());
-            egui::ScrollArea::vertical()
-                .id_salt("preview_img")
-                .auto_shrink([false, false])
-                .max_height(ui.available_height())
-                .show(ui, |ui| {
-                    ui.set_max_width(ui.available_width());
-                    let available = ui.available_size();
-                    ui.add(
-                        egui::Image::new(uri)
-                            .max_width(available.x)
-                            .max_height(available.y - 100.0)
-                            .maintain_aspect_ratio(true)
-                            .shrink_to_fit(),
-                    );
-                });
-            return;
-        }
-
-        // Markdown preview
-        if matches!(entry.extension.as_str(), "md" | "markdown") {
-            view::preview::render_markdown_preview(ui, entry);
-            return;
-        }
-
-        // Archive preview
-        if matches!(
-            entry.extension.as_str(),
-            "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz"
-        ) {
-            view::preview::render_archive_preview(ui, entry);
-            return;
-        }
-
-        // Audio metadata preview
-        if matches!(
-            entry.extension.as_str(),
-            "mp3" | "flac" | "ogg" | "m4a" | "wav"
-        ) {
-            view::preview::render_audio_metadata(ui, entry);
-            return;
-        }
-
-        // PDF preview
-        if matches!(entry.extension.as_str(), "pdf") {
-            view::preview::render_pdf_preview(ui, entry);
-            return;
-        }
-
-        // Word document preview
-        if matches!(entry.extension.as_str(), "docx" | "doc") {
-            view::preview::render_docx_preview(ui, entry);
-            return;
-        }
-
-        // Excel spreadsheet preview
-        if matches!(entry.extension.as_str(), "xlsx" | "xls") {
-            view::preview::render_xlsx_preview(ui, entry);
-            return;
-        }
-
-        // Code/text files with syntax highlighting
-        let text_extensions = [
-            "rs",
-            "py",
-            "js",
-            "ts",
-            "jsx",
-            "tsx",
-            "c",
-            "cpp",
-            "h",
-            "hpp",
-            "java",
-            "go",
-            "rb",
-            "php",
-            "swift",
-            "kt",
-            "scala",
-            "sh",
-            "bash",
-            "zsh",
-            "fish",
-            "ps1",
-            "bat",
-            "cmd",
-            "html",
-            "css",
-            "scss",
-            "sass",
-            "less",
-            "xml",
-            "yaml",
-            "yml",
-            "toml",
-            "json",
-            "ini",
-            "cfg",
-            "txt",
-            "log",
-            "conf",
-            "config",
-            "env",
-            "gitignore",
-            "dockerignore",
-            "editorconfig",
-            "sql",
-            "r",
-            "lua",
-            "vim",
-            "el",
-            "clj",
-            "ex",
-            "exs",
-            "erl",
-            "hrl",
-            "hs",
-            "ml",
-            "fs",
-            "cs",
-            "vb",
-            "pl",
-            "pm",
-            "t",
-            "asm",
-            "s",
-            "d",
-            "diff",
-            "patch",
-            "mak",
-            "makefile",
-            "cmake",
-            "gradle",
-            "properties",
-            "prefs",
-            "plist",
-            "nix",
-            "lisp",
-            "scm",
-            "rkt",
-            "proto",
-            "thrift",
-            "graphql",
-            "gql",
-            "vue",
-            "svelte",
-            "astro",
-            "dart",
-            "nim",
-            "zig",
-            "v",
-            "vala",
-            "cr",
-            "rst",
-            "adoc",
-            "tex",
-            "bib",
-            "lock",
-        ];
-
-        let check_as_text = text_extensions.contains(&entry.extension.as_str())
-            || entry.extension.is_empty()
-            || entry.name.starts_with('.'); // Hidden config files often have no extension
-
-        if check_as_text {
-            if entry.size > style::MAX_PREVIEW_SIZE {
-                view::preview::render_large_file_message(ui, entry);
-                return;
-            }
-
-            if !is_likely_binary(&entry.path) {
-                view::preview::render_syntax_highlighted(ui, entry, &self.syntax_set, &self.theme_set, self.ui.theme);
-                return;
-            }
-        }
-
-        // Binary file - show info instead of auto-loading hex
-        ui.centered_and_justified(|ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(20.0);
-                ui.label(egui::RichText::new("📦 Binary File").size(18.0));
-                ui.add_space(10.0);
-                ui.label("Preview not available for this file type");
-                ui.add_space(5.0);
-                ui.label(format!("Extension: .{}", entry.extension));
-            });
-        });
     }
 
     // --- Drag and Drop Handling ---
@@ -989,8 +1023,6 @@ impl Heike {
 
     // --- Rendering Methods ---
 
-
-    // Note: execute_command method is missing but needed for handle_input to compile
     pub(crate) fn execute_command(&mut self, _ctx: &egui::Context) {
         let parts: Vec<&str> = self.mode.command_buffer.trim().split_whitespace().collect();
         if parts.is_empty() {
@@ -1005,38 +1037,34 @@ impl Heike {
             }
             "mkdir" => {
                 if parts.len() < 2 {
-                    self.ui.error_message = Some(("Usage: mkdir <name>".into(), Instant::now()));
+                    self.ui.set_error("Usage: mkdir <name>".into());
                 } else {
                     let dir_name = parts[1..].join(" ");
                     let new_dir = self.navigation.current_path.join(&dir_name);
                     match fs::create_dir(&new_dir) {
                         Ok(_) => {
-                            self.ui.info_message =
-                                Some((format!("Created directory: {}", dir_name), Instant::now()));
+                            self.ui.set_info(format!("Created directory: {}", dir_name));
                             self.request_refresh();
                         }
                         Err(e) => {
-                            self.ui.error_message =
-                                Some((format!("Failed to create directory: {}", e), Instant::now()));
+                            self.ui.set_error(format!("Failed to create directory: {}", e));
                         }
                     }
                 }
             }
             "touch" => {
                 if parts.len() < 2 {
-                    self.ui.error_message = Some(("Usage: touch <filename>".into(), Instant::now()));
+                    self.ui.set_error("Usage: touch <filename>".into());
                 } else {
                     let file_name = parts[1..].join(" ");
                     let new_file = self.navigation.current_path.join(&file_name);
                     match fs::File::create(&new_file) {
                         Ok(_) => {
-                            self.ui.info_message =
-                                Some((format!("Created file: {}", file_name), Instant::now()));
+                            self.ui.set_info(format!("Created file: {}", file_name));
                             self.request_refresh();
                         }
                         Err(e) => {
-                            self.ui.error_message =
-                                Some((format!("Failed to create file: {}", e), Instant::now()));
+                            self.ui.set_error(format!("Failed to create file: {}", e));
                         }
                     }
                 }
@@ -1065,14 +1093,10 @@ impl Heike {
                 }
             }
             "help" => {
-                self.ui.info_message = Some((
-                    "Commands: q/quit, mkdir <name>, touch <file>, cd <path>, help".into(),
-                    Instant::now()
-                ));
+                self.ui.set_info("Commands: q/quit, mkdir <name>, touch <file>, cd <path>, help".into());
             }
             _ => {
-                self.ui.error_message =
-                    Some((format!("Unknown command: {}. Type 'help' for available commands.", parts[0]), Instant::now()));
+                self.ui.set_error(format!("Unknown command: {}. Type 'help' for available commands.", parts[0]));
             }
         }
 
@@ -1090,16 +1114,7 @@ impl eframe::App for Heike {
         }
 
         // Auto-dismiss old messages
-        if let Some((_, time)) = &self.ui.error_message {
-            if time.elapsed() > Duration::from_secs(style::MESSAGE_TIMEOUT_SECS) {
-                self.ui.error_message = None;
-            }
-        }
-        if let Some((_, time)) = &self.ui.info_message {
-            if time.elapsed() > Duration::from_secs(style::MESSAGE_TIMEOUT_SECS) {
-                self.ui.info_message = None;
-            }
-        }
+        self.ui.clear_expired_messages(style::MESSAGE_TIMEOUT_SECS);
 
         // Periodically save settings (every 10 seconds)
         if self.ui.last_settings_save.elapsed() > Duration::from_secs(10) {
@@ -1130,6 +1145,59 @@ impl eframe::App for Heike {
         let next_selection = std::cell::RefCell::new(None);
         let pending_selection = std::cell::RefCell::new(None);
         let context_action = std::cell::RefCell::new(None::<Box<dyn FnOnce(&mut Self)>>);
+
+        // Render tab bar if multiple tabs exist
+        let tab_count = self.tabs.tab_count();
+        if tab_count > 1 {
+            // Collect tab info before entering UI closure
+            let tab_labels: Vec<String> = self.tabs.tabs.iter().map(|t| t.label.clone()).collect();
+            let active_tab_index = self.tabs.active_tab;
+
+            let tab_action = std::cell::RefCell::new(None::<TabAction>);
+
+            egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    for (i, label) in tab_labels.iter().enumerate() {
+                        let is_active = i == active_tab_index;
+                        let response = ui.selectable_label(is_active, label);
+
+                        if response.clicked() {
+                            *tab_action.borrow_mut() = Some(TabAction::SwitchTo(i));
+                        }
+
+                        // Close button
+                        if response.hovered() && tab_count > 1 {
+                            let close_response = ui.small_button("×");
+                            if close_response.clicked() {
+                                *tab_action.borrow_mut() = Some(TabAction::Close(i));
+                            }
+                        }
+                    }
+
+                    // New tab button
+                    if ui.button("+").clicked() {
+                        *tab_action.borrow_mut() = Some(TabAction::New);
+                    }
+                });
+            });
+
+            // Execute tab action after UI rendering
+            if let Some(action) = tab_action.into_inner() {
+                match action {
+                    TabAction::SwitchTo(i) => self.switch_to_tab(i),
+                    TabAction::Close(i) => {
+                        if i == active_tab_index {
+                            self.close_current_tab();
+                        } else {
+                            self.save_current_tab_state();
+                            self.tabs.close_tab(i);
+                            self.load_active_tab_state();
+                        }
+                    }
+                    TabAction::New => self.new_tab(None),
+                }
+            }
+        }
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.add_space(4.0);
@@ -1217,6 +1285,9 @@ impl eframe::App for Heike {
                         AppMode::Rename => {
                             ui.colored_label(egui::Color32::ORANGE, "RENAME");
                         }
+                        AppMode::BulkRename { .. } => {
+                            ui.colored_label(egui::Color32::ORANGE, "BULK RENAME");
+                        }
                         AppMode::DeleteConfirm => {
                             ui.colored_label(egui::Color32::RED, "CONFIRM DELETE?");
                         }
@@ -1243,7 +1314,7 @@ impl eframe::App for Heike {
                     self.entries.visible_entries.len(),
                     self.entries.all_entries.len()
                 ));
-                
+
                 // Show current selected file info
                 if let Some(idx) = self.selection.selected_index {
                     if let Some(entry) = self.entries.visible_entries.get(idx) {
@@ -1256,7 +1327,11 @@ impl eframe::App for Heike {
                         ));
                     }
                 }
-                
+
+                // Show sort options
+                ui.separator();
+                ui.label(self.ui.sort_options.display_string());
+
                 // Show current path
                 ui.separator();
                 style::truncated_label(ui, format!("{}", self.navigation.current_path.display()));
@@ -1482,6 +1557,7 @@ impl eframe::App for Heike {
                 self.render_help_modal(ctx);
                 self.render_search_input_modal(ctx);
                 self.render_input_modal(ctx);
+                self.render_bulk_rename_modal(ctx);
 
                 // Strip-based layout with three panes and dividers
                 use egui_extras::{Size, StripBuilder};
@@ -1506,10 +1582,6 @@ impl eframe::App for Heike {
                         strip.cell(|ui| self.render_divider(ui, 1));
                         strip.cell(|ui| {
                             ui.add_space(4.0);
-                            ui.vertical_centered(|ui| {
-                                ui.heading("Preview");
-                            });
-                            ui.separator();
                             self.render_preview(ui, &next_navigation, &pending_selection);
                         });
                     });

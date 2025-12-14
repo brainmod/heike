@@ -75,6 +75,9 @@ impl Heike {
                             ui.label("d / r");
                             ui.label("Delete / Rename");
                             ui.end_row();
+                            ui.label("R (Shift+r)");
+                            ui.label("Bulk Rename (vidir-style)");
+                            ui.end_row();
                             ui.label("?");
                             ui.label("Toggle Help");
                             ui.end_row();
@@ -92,6 +95,40 @@ impl Heike {
                             ui.end_row();
                         });
                         ui.add_space(10.0);
+                        ui.heading("Tab Management");
+                        ui.separator();
+                        egui::Grid::new("tab_grid").striped(true).show(ui, |ui| {
+                            ui.label("Ctrl+T");
+                            ui.label("New Tab");
+                            ui.end_row();
+                            ui.label("Ctrl+W");
+                            ui.label("Close Tab");
+                            ui.end_row();
+                            ui.label("Ctrl+Tab");
+                            ui.label("Next Tab");
+                            ui.end_row();
+                            ui.label("Ctrl+Shift+Tab");
+                            ui.label("Previous Tab");
+                            ui.end_row();
+                            ui.label("Alt+1...9");
+                            ui.label("Switch to Tab 1-9");
+                            ui.end_row();
+                        });
+                        ui.add_space(10.0);
+                        ui.heading("Sort Options");
+                        ui.separator();
+                        egui::Grid::new("sort_grid").striped(true).show(ui, |ui| {
+                            ui.label("Shift+O");
+                            ui.label("Cycle Sort (Name → Size → Modified → Ext)");
+                            ui.end_row();
+                            ui.label("Alt+O");
+                            ui.label("Toggle Order (Ascending ↔ Descending)");
+                            ui.end_row();
+                            ui.label("Ctrl+O");
+                            ui.label("Toggle Directories First");
+                            ui.end_row();
+                        });
+                        ui.add_space(10.0);
                         ui.heading("Available Bookmarks");
                         ui.separator();
                         for key in self.bookmarks.keys() {
@@ -100,7 +137,7 @@ impl Heike {
                             }
                         }
                         ui.add_space(10.0);
-                        if ui.button("Close").clicked() {
+                        if ui.button("Close (Esc)").clicked() {
                             self.mode.set_mode(AppMode::Normal);
                         }
                     });
@@ -150,7 +187,10 @@ impl Heike {
                                 && !self.ui.search_query.is_empty()
                             {
                                 self.ui.search_in_progress = true;
+                                // Reset all search statistics
                                 self.ui.search_file_count = 0;
+                                self.ui.search_files_skipped = 0;
+                                self.ui.search_errors = 0;
                                 let _ = self.command_tx.send(IoCommand::SearchContent {
                                     query: self.ui.search_query.clone(),
                                     root_path: self.navigation.current_path.clone(),
@@ -168,8 +208,10 @@ impl Heike {
                             ui.horizontal(|ui| {
                                 ui.spinner();
                                 ui.label(format!(
-                                    "Searching... ({} files)",
-                                    self.ui.search_file_count
+                                    "Searching... ({} searched, {} skipped, {} errors)",
+                                    self.ui.search_file_count,
+                                    self.ui.search_files_skipped,
+                                    self.ui.search_errors
                                 ));
                             });
                         }
@@ -206,5 +248,65 @@ impl Heike {
                     });
                 });
         }
+    }
+
+    pub(crate) fn render_bulk_rename_modal(&mut self, ctx: &egui::Context) {
+        // Extract the data we need before entering the closure
+        let is_bulk_rename = matches!(self.mode.mode, AppMode::BulkRename { .. });
+        if !is_bulk_rename {
+            return;
+        }
+
+        let (file_count, focus_input) = if let AppMode::BulkRename {
+            original_paths, ..
+        } = &self.mode.mode
+        {
+            (original_paths.len(), self.mode.focus_input)
+        } else {
+            return;
+        };
+
+        egui::Window::new("Bulk Rename")
+            .collapsible(false)
+            .resizable(true)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(style::modal_width(ctx) * 1.2)
+            .default_height(style::modal_max_height(ctx) * 0.8)
+            .show(ctx, |ui| {
+                ui.label(format!("Editing {} files (one per line):", file_count));
+                ui.label(
+                    egui::RichText::new("Press Ctrl+Enter to apply, Escape to cancel")
+                        .weak()
+                        .italics(),
+                );
+                ui.separator();
+
+                // Get mutable reference to edit_buffer
+                if let AppMode::BulkRename { edit_buffer, .. } = &mut self.mode.mode {
+                    // Multi-line text editor
+                    let response = ui.add_sized(
+                        [ui.available_width(), ui.available_height() - 60.0],
+                        egui::TextEdit::multiline(edit_buffer)
+                            .font(egui::TextStyle::Monospace)
+                            .code_editor()
+                            .desired_width(f32::INFINITY),
+                    );
+
+                    if focus_input {
+                        response.request_focus();
+                        self.mode.focus_input = false;
+                    }
+                }
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Apply (Ctrl+Enter)").clicked() {
+                        self.apply_bulk_rename();
+                    }
+                    if ui.button("Cancel (Esc)").clicked() {
+                        self.mode.set_mode(AppMode::Normal);
+                    }
+                });
+            });
     }
 }

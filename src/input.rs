@@ -31,9 +31,9 @@ impl Heike {
         }
 
         if !errors.is_empty() {
-            self.ui.error_message = Some((errors.join(" | "), Instant::now()));
+            self.ui.set_error(errors.join(" | "));
         } else if count > 0 {
-            self.ui.info_message = Some((format!("Copied {} file(s)", count), Instant::now()));
+            self.ui.set_info(format!("Copied {} file(s)", count));
         }
 
         if count > 0 {
@@ -42,7 +42,18 @@ impl Heike {
     }
 
     pub fn handle_input(&mut self, ctx: &egui::Context) {
-        // 1. Modal Inputs (Command, Filter, Rename, SearchInput)
+        // 1. Bulk Rename Mode
+        if matches!(self.mode.mode, AppMode::BulkRename { .. }) {
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.ctrl) {
+                self.apply_bulk_rename();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.mode.set_mode(AppMode::Normal);
+            }
+            return;
+        }
+
+        // 2. Modal Inputs (Command, Filter, Rename, SearchInput)
         if matches!(
             self.mode.mode,
             AppMode::Command | AppMode::Filtering | AppMode::Rename | AppMode::SearchInput
@@ -60,7 +71,10 @@ impl Heike {
                         // Start search
                         if !self.ui.search_query.is_empty() {
                             self.ui.search_in_progress = true;
+                            // Reset search statistics
                             self.ui.search_file_count = 0;
+                            self.ui.search_files_skipped = 0;
+                            self.ui.search_errors = 0;
                             let _ = self.command_tx.send(IoCommand::SearchContent {
                                 query: self.ui.search_query.clone(),
                                 root_path: self.navigation.current_path.clone(),
@@ -83,7 +97,7 @@ impl Heike {
             return;
         }
 
-        // 2. Confirmation Modals
+        // 3. Confirmation Modals
         if self.mode.mode == AppMode::DeleteConfirm {
             if ctx.input(|i| i.key_pressed(egui::Key::Y) || i.key_pressed(egui::Key::Enter)) {
                 self.perform_delete();
@@ -170,6 +184,8 @@ impl Heike {
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            // Clear stale 'g' press timer when exiting modes
+            self.selection.last_g_press = None;
             self.mode.set_mode(AppMode::Normal);
             self.mode.command_buffer.clear();
             self.selection.multi_selection.clear();
@@ -224,6 +240,39 @@ impl Heike {
             self.mode.set_mode(AppMode::Help);
             return;
         }
+
+        // --- Tab Management ---
+        if ctx.input(|i| i.key_pressed(egui::Key::T) && i.modifiers.ctrl) {
+            // Ctrl+T: New tab in current directory
+            self.new_tab(None);
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::W) && i.modifiers.ctrl) {
+            // Ctrl+W: Close current tab
+            self.close_current_tab();
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && !i.modifiers.shift) {
+            // Ctrl+Tab: Next tab
+            self.next_tab();
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift) {
+            // Ctrl+Shift+Tab: Previous tab
+            self.prev_tab();
+            return;
+        }
+        // Alt+1 through Alt+9 to switch tabs
+        for i in 1..=9 {
+            let key_name = i.to_string();
+            if let Some(key) = egui::Key::from_name(&key_name) {
+                if ctx.input(|input| input.modifiers.alt && input.key_pressed(key)) {
+                    self.switch_to_tab(i - 1);
+                    return;
+                }
+            }
+        }
+
         if ctx.input(|i| i.key_pressed(egui::Key::V) && !i.modifiers.shift) {
             if self.mode.mode == AppMode::Normal {
                 // Enter visual mode
@@ -326,7 +375,11 @@ impl Heike {
         if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
             self.mode.set_mode(AppMode::DeleteConfirm);
         }
-        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R)) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.shift) {
+            // Shift+R: Bulk rename - rename multiple files at once
+            self.enter_bulk_rename_mode();
+        }
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R) && !i.modifiers.shift) {
             if let Some(idx) = self.selection.selected_index {
                 if let Some(entry) = self.entries.visible_entries.get(idx) {
                     self.mode.command_buffer = entry.name.clone();
@@ -356,15 +409,9 @@ impl Heike {
             if let Some(idx) = self.selection.selected_index {
                 if let Some(entry) = self.entries.visible_entries.get(idx) {
                     if matches!(entry.extension.as_str(), "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz") {
-                        self.ui.info_message = Some((
-                            "Use ':extract <path>' command to extract this archive".into(),
-                            Instant::now()
-                        ));
+                        self.ui.set_info("Use ':extract <path>' command to extract this archive".into());
                     } else {
-                        self.ui.error_message = Some((
-                            "Selected file is not an archive".into(),
-                            Instant::now()
-                        ));
+                        self.ui.set_error("Selected file is not an archive".into());
                     }
                 }
             }
@@ -501,16 +548,10 @@ impl Heike {
                         if path.is_dir() {
                             self.navigate_to(path);
                         } else {
-                            self.ui.error_message = Some((
-                                format!("Bookmark '{}' does not exist or is not a directory", key),
-                                Instant::now()
-                            ));
+                            self.ui.set_error(format!("Bookmark '{}' does not exist or is not a directory", key));
                         }
                     } else {
-                        self.ui.info_message = Some((
-                            format!("No bookmark '{}' defined", key),
-                            Instant::now()
-                        ));
+                        self.ui.set_info(format!("No bookmark '{}' defined", key));
                     }
                     self.selection.last_g_press = None;
                 }
@@ -518,6 +559,8 @@ impl Heike {
         }
 
         if changed {
+            // Clear stale 'g' press timer when any other navigation action occurs
+            self.selection.last_g_press = None;
             self.selection.selected_index = Some(new_index);
             self.selection.last_selection_change = Instant::now();
             self.selection.disable_autoscroll = false; // Re-enable autoscroll on keyboard navigation
