@@ -373,14 +373,80 @@ impl Heike {
     fn process_watcher_events(&mut self) {
         while let Ok(event_result) = self.watcher_rx.try_recv() {
             match event_result {
-                Ok(_event) => {
-                    // File system changed, trigger refresh
-                    self.request_refresh();
+                Ok(event) => {
+                    // Handle file system events incrementally
+                    self.handle_fs_event(event);
                 }
                 Err(e) => {
                     // Watcher error, but don't show it to avoid spam
                     eprintln!("Watcher error: {}", e);
                 }
+            }
+        }
+    }
+
+    fn handle_fs_event(&mut self, event: Event) {
+        use notify::EventKind;
+
+        // Only handle events for the current directory
+        let in_current_dir = event.paths.iter().any(|p| {
+            p.parent() == Some(self.navigation.current_path.as_path())
+                || p.as_path() == self.navigation.current_path.as_path()
+        });
+
+        if !in_current_dir {
+            return;
+        }
+
+        match event.kind {
+            EventKind::Create(_) => {
+                // File/directory created - add to entries
+                for path in &event.paths {
+                    if path.parent() == Some(self.navigation.current_path.as_path()) {
+                        if let Some(new_entry) = FileEntry::from_path(path.clone()) {
+                            // Check if entry already exists
+                            if !self.entries.all_entries.iter().any(|e| &e.path == path) {
+                                self.entries.all_entries.push(new_entry);
+                            }
+                        }
+                    }
+                }
+                self.apply_filter(); // Re-sort and filter
+            }
+            EventKind::Remove(_) => {
+                // File/directory removed - remove from entries
+                for path in &event.paths {
+                    self.entries.all_entries.retain(|e| &e.path != path);
+                    self.entries.visible_entries.retain(|e| &e.path != path);
+                    self.entries.parent_entries.retain(|e| &e.path != path);
+                    // Remove from multi-selection if present
+                    self.selection.multi_selection.remove(path);
+                }
+                self.apply_filter();
+                self.validate_selection();
+            }
+            EventKind::Modify(_) => {
+                // File modified - update entry metadata
+                for path in &event.paths {
+                    if let Some(updated_entry) = FileEntry::from_path(path.clone()) {
+                        // Update in all_entries
+                        if let Some(entry) = self.entries.all_entries.iter_mut().find(|e| &e.path == path) {
+                            *entry = updated_entry.clone();
+                        }
+                        // Update in visible_entries
+                        if let Some(entry) = self.entries.visible_entries.iter_mut().find(|e| &e.path == path) {
+                            *entry = updated_entry.clone();
+                        }
+                        // Update in parent_entries
+                        if let Some(entry) = self.entries.parent_entries.iter_mut().find(|e| &e.path == path) {
+                            *entry = updated_entry;
+                        }
+                    }
+                }
+            }
+            _ => {
+                // For other events (move, etc.), do a full refresh to be safe
+                self.request_refresh();
             }
         }
     }

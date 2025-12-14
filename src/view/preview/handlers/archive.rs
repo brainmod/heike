@@ -37,6 +37,8 @@ impl PreviewHandler for ArchivePreviewHandler {
         entry: &FileEntry,
         _context: &PreviewContext,
     ) -> Result<(), String> {
+        // For zip files, we can get the exact total count cheaply (already indexed)
+        // For tar files, getting the total requires full iteration, so we indicate if truncated
         let result = if entry.extension == "zip" {
             fs::File::open(&entry.path).ok().and_then(|file| {
                 ZipArchive::new(file).ok().map(|mut archive| {
@@ -47,7 +49,7 @@ impl PreviewHandler for ArchivePreviewHandler {
                             items.push((file.name().to_string(), file.size(), file.is_dir()));
                         }
                     }
-                    (items, total)
+                    (items, Some(total)) // ZIP: we know exact total
                 })
             })
         } else if entry.extension == "tar" || entry.extension == "gz" || entry.extension == "tgz" {
@@ -60,9 +62,11 @@ impl PreviewHandler for ArchivePreviewHandler {
                     };
 
                 Archive::new(reader).entries().ok().map(|entries| {
+                    // Lazily iterate only up to MAX_PREVIEW_ITEMS
+                    // We don't know the total count without full iteration
                     let items: Vec<_> = entries
                         .filter_map(|e| e.ok())
-                        .take(Self::MAX_PREVIEW_ITEMS)
+                        .take(Self::MAX_PREVIEW_ITEMS + 1) // Take one extra to detect if there are more
                         .map(|e| {
                             let size = e.header().size().unwrap_or(0);
                             let path = e
@@ -74,8 +78,17 @@ impl PreviewHandler for ArchivePreviewHandler {
                             (path, size, is_dir)
                         })
                         .collect();
-                    let total = items.len();
-                    (items, total)
+
+                    let has_more = items.len() > Self::MAX_PREVIEW_ITEMS;
+                    let shown_count = items.len().min(Self::MAX_PREVIEW_ITEMS);
+                    let items_to_show: Vec<_> = if has_more {
+                        items.into_iter().take(Self::MAX_PREVIEW_ITEMS).collect()
+                    } else {
+                        items
+                    };
+
+                    // TAR: None indicates unknown total (lazy mode)
+                    (items_to_show, if has_more { None } else { Some(shown_count) })
                 })
             })
         } else {
@@ -91,15 +104,22 @@ impl PreviewHandler for ArchivePreviewHandler {
                     return Ok(());
                 }
 
-                ui.label(format!(
-                    "Archive contains {} items{}:",
-                    total,
-                    if total > Self::MAX_PREVIEW_ITEMS {
-                        format!(" (showing first {})", Self::MAX_PREVIEW_ITEMS)
-                    } else {
-                        String::new()
+                // Format the count message based on whether we know the exact total
+                let count_msg = match total {
+                    Some(t) => {
+                        if t > Self::MAX_PREVIEW_ITEMS {
+                            format!("Archive contains {} items (showing first {})", t, Self::MAX_PREVIEW_ITEMS)
+                        } else {
+                            format!("Archive contains {} items", t)
+                        }
                     }
-                ));
+                    None => {
+                        // Unknown total (lazy tar iteration)
+                        format!("Archive contains {}+ items (lazy preview)", items.len())
+                    }
+                };
+
+                ui.label(format!("{}:", count_msg));
                 ui.separator();
 
                 egui::ScrollArea::vertical()
