@@ -1559,6 +1559,9 @@ impl eframe::App for Heike {
                 self.render_input_modal(ctx);
                 self.render_bulk_rename_modal(ctx);
 
+                self.render_tab_bar(ui);
+                ui.add_space(6.0);
+
                 // Strip-based layout with three panes and dividers
                 use egui_extras::{Size, StripBuilder};
                 StripBuilder::new(ui)
