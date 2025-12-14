@@ -31,9 +31,9 @@ impl Heike {
         }
 
         if !errors.is_empty() {
-            self.ui.error_message = Some((errors.join(" | "), Instant::now()));
+            self.ui.set_error(errors.join(" | "));
         } else if count > 0 {
-            self.ui.info_message = Some((format!("Copied {} file(s)", count), Instant::now()));
+            self.ui.set_info(format!("Copied {} file(s)", count));
         }
 
         if count > 0 {
@@ -409,15 +409,9 @@ impl Heike {
             if let Some(idx) = self.selection.selected_index {
                 if let Some(entry) = self.entries.visible_entries.get(idx) {
                     if matches!(entry.extension.as_str(), "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz") {
-                        self.ui.info_message = Some((
-                            "Use ':extract <path>' command to extract this archive".into(),
-                            Instant::now()
-                        ));
+                        self.ui.set_info("Use ':extract <path>' command to extract this archive".into());
                     } else {
-                        self.ui.error_message = Some((
-                            "Selected file is not an archive".into(),
-                            Instant::now()
-                        ));
+                        self.ui.set_error("Selected file is not an archive".into());
                     }
                 }
             }
@@ -554,16 +548,10 @@ impl Heike {
                         if path.is_dir() {
                             self.navigate_to(path);
                         } else {
-                            self.ui.error_message = Some((
-                                format!("Bookmark '{}' does not exist or is not a directory", key),
-                                Instant::now()
-                            ));
+                            self.ui.set_error(format!("Bookmark '{}' does not exist or is not a directory", key));
                         }
                     } else {
-                        self.ui.info_message = Some((
-                            format!("No bookmark '{}' defined", key),
-                            Instant::now()
-                        ));
+                        self.ui.set_info(format!("No bookmark '{}' defined", key));
                     }
                     self.selection.last_g_press = None;
                 }

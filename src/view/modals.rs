@@ -115,6 +115,20 @@ impl Heike {
                             ui.end_row();
                         });
                         ui.add_space(10.0);
+                        ui.heading("Sort Options");
+                        ui.separator();
+                        egui::Grid::new("sort_grid").striped(true).show(ui, |ui| {
+                            ui.label("Shift+O");
+                            ui.label("Cycle Sort (Name → Size → Modified → Ext)");
+                            ui.end_row();
+                            ui.label("Alt+O");
+                            ui.label("Toggle Order (Ascending ↔ Descending)");
+                            ui.end_row();
+                            ui.label("Ctrl+O");
+                            ui.label("Toggle Directories First");
+                            ui.end_row();
+                        });
+                        ui.add_space(10.0);
                         ui.heading("Available Bookmarks");
                         ui.separator();
                         for key in self.bookmarks.keys() {

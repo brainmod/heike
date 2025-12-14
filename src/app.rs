@@ -209,7 +209,7 @@ impl Heike {
 
     pub(crate) fn close_current_tab(&mut self) {
         if self.tabs.tab_count() <= 1 {
-            self.ui.error_message = Some(("Cannot close the last tab".into(), Instant::now()));
+            self.ui.set_error("Cannot close the last tab".into());
             return;
         }
         // Close the tab (this automatically switches to another tab)
@@ -523,12 +523,9 @@ impl Heike {
                         results,
                         selected_index: 0,
                     });
-                    self.ui.info_message = Some((
-                        format!(
-                            "Found {} matches in {} files",
-                            result_count, self.ui.search_file_count
-                        ),
-                        Instant::now(),
+                    self.ui.set_info(format!(
+                        "Found {} matches in {} files",
+                        result_count, self.ui.search_file_count
                     ));
                 }
                 IoResult::SearchProgress {
@@ -543,7 +540,7 @@ impl Heike {
                 IoResult::Error(msg) => {
                     self.ui.is_loading = false;
                     self.ui.search_in_progress = false;
-                    self.ui.error_message = Some((msg, Instant::now()));
+                    self.ui.set_error(msg);
                     self.entries.all_entries.clear();
                     self.entries.visible_entries.clear();
                 }
@@ -571,7 +568,7 @@ impl Heike {
 
             self.finish_navigation();
         } else if let Err(e) = open::that(&path) {
-            self.ui.error_message = Some((format!("Could not open file: {}", e), Instant::now()));
+            self.ui.set_error(format!("Could not open file: {}", e));
         }
     }
 
@@ -613,7 +610,7 @@ impl Heike {
             }
         }
 
-        self.ui.error_message = Some(("Previous directory no longer exists".into(), Instant::now()));
+        self.ui.set_error("Previous directory no longer exists".into());
     }
 
     pub(crate) fn navigate_forward(&mut self) {
@@ -641,7 +638,7 @@ impl Heike {
             self.navigation.history.remove(idx);
         }
 
-        self.ui.error_message = Some(("Next directory no longer exists".into(), Instant::now()));
+        self.ui.set_error("Next directory no longer exists".into());
     }
 
     fn finish_navigation(&mut self) {
@@ -680,10 +677,7 @@ impl Heike {
         } else {
             "Cut"
         };
-        self.ui.info_message = Some((
-            format!("{} {} files", op_text, self.clipboard.len()),
-            Instant::now(),
-        ));
+        self.ui.set_info(format!("{} {} files", op_text, self.clipboard.len()));
     }
 
     pub(crate) fn paste_clipboard(&mut self) {
@@ -737,9 +731,9 @@ impl Heike {
         }
 
         if !errors.is_empty() {
-            self.ui.error_message = Some((errors.join(" | "), Instant::now()));
+            self.ui.set_error(errors.join(" | "));
         } else {
-            self.ui.info_message = Some((format!("Processed {} files", count), Instant::now()));
+            self.ui.set_info(format!("Processed {} files", count));
         }
 
         if op == ClipboardOp::Cut {
@@ -778,12 +772,9 @@ impl Heike {
         self.request_refresh();
 
         if error_count > 0 {
-            self.ui.error_message = Some((
-                format!("Failed to delete {} item(s)", error_count),
-                Instant::now(),
-            ));
+            self.ui.set_error(format!("Failed to delete {} item(s)", error_count));
         } else {
-            self.ui.info_message = Some(("Items moved to trash".into(), Instant::now()));
+            self.ui.set_info("Items moved to trash".into());
         }
     }
 
@@ -794,10 +785,9 @@ impl Heike {
                 if !new_name.is_empty() {
                     let new_path = entry.path.parent().unwrap().join(new_name);
                     if let Err(e) = fs::rename(&entry.path, &new_path) {
-                        self.ui.error_message =
-                            Some((format!("Rename failed: {}", e), Instant::now()));
+                        self.ui.set_error(format!("Rename failed: {}", e));
                     } else {
-                        self.ui.info_message = Some(("Renamed successfully".into(), Instant::now()));
+                        self.ui.set_info("Renamed successfully".into());
                     }
                 }
             }
@@ -828,7 +818,7 @@ impl Heike {
         };
 
         if files_to_rename.is_empty() {
-            self.ui.error_message = Some(("No files selected for bulk rename".into(), Instant::now()));
+            self.ui.set_error("No files selected for bulk rename".into());
             return;
         }
 
@@ -859,20 +849,17 @@ impl Heike {
 
             // Validation: number of lines must match number of files
             if new_names.len() != original_paths.len() {
-                self.ui.error_message = Some((
-                    format!(
-                        "Line count mismatch: {} files but {} names",
-                        original_paths.len(),
-                        new_names.len()
-                    ),
-                    Instant::now(),
+                self.ui.set_error(format!(
+                    "Line count mismatch: {} files but {} names",
+                    original_paths.len(),
+                    new_names.len()
                 ));
                 return;
             }
 
             // Validation: no empty names
             if new_names.iter().any(|n| n.trim().is_empty()) {
-                self.ui.error_message = Some(("Empty filename not allowed".into(), Instant::now()));
+                self.ui.set_error("Empty filename not allowed".into());
                 return;
             }
 
@@ -880,10 +867,7 @@ impl Heike {
             let mut seen = std::collections::HashSet::new();
             for name in &new_names {
                 if !seen.insert(name.trim()) {
-                    self.ui.error_message = Some((
-                        format!("Duplicate filename: {}", name.trim()),
-                        Instant::now(),
-                    ));
+                    self.ui.set_error(format!("Duplicate filename: {}", name.trim()));
                     return;
                 }
             }
@@ -923,20 +907,14 @@ impl Heike {
 
             // Show results
             if !errors.is_empty() {
-                self.ui.error_message = Some((
-                    format!(
-                        "Renamed {}/{} files. Errors: {}",
-                        success_count,
-                        original_paths.len(),
-                        errors.join(", ")
-                    ),
-                    Instant::now(),
+                self.ui.set_error(format!(
+                    "Renamed {}/{} files. Errors: {}",
+                    success_count,
+                    original_paths.len(),
+                    errors.join(", ")
                 ));
             } else {
-                self.ui.info_message = Some((
-                    format!("Successfully renamed {} file(s)", success_count),
-                    Instant::now(),
-                ));
+                self.ui.set_info(format!("Successfully renamed {} file(s)", success_count));
             }
 
             self.mode.set_mode(AppMode::Normal);
@@ -1078,38 +1056,34 @@ impl Heike {
             }
             "mkdir" => {
                 if parts.len() < 2 {
-                    self.ui.error_message = Some(("Usage: mkdir <name>".into(), Instant::now()));
+                    self.ui.set_error("Usage: mkdir <name>".into());
                 } else {
                     let dir_name = parts[1..].join(" ");
                     let new_dir = self.navigation.current_path.join(&dir_name);
                     match fs::create_dir(&new_dir) {
                         Ok(_) => {
-                            self.ui.info_message =
-                                Some((format!("Created directory: {}", dir_name), Instant::now()));
+                            self.ui.set_info(format!("Created directory: {}", dir_name));
                             self.request_refresh();
                         }
                         Err(e) => {
-                            self.ui.error_message =
-                                Some((format!("Failed to create directory: {}", e), Instant::now()));
+                            self.ui.set_error(format!("Failed to create directory: {}", e));
                         }
                     }
                 }
             }
             "touch" => {
                 if parts.len() < 2 {
-                    self.ui.error_message = Some(("Usage: touch <filename>".into(), Instant::now()));
+                    self.ui.set_error("Usage: touch <filename>".into());
                 } else {
                     let file_name = parts[1..].join(" ");
                     let new_file = self.navigation.current_path.join(&file_name);
                     match fs::File::create(&new_file) {
                         Ok(_) => {
-                            self.ui.info_message =
-                                Some((format!("Created file: {}", file_name), Instant::now()));
+                            self.ui.set_info(format!("Created file: {}", file_name));
                             self.request_refresh();
                         }
                         Err(e) => {
-                            self.ui.error_message =
-                                Some((format!("Failed to create file: {}", e), Instant::now()));
+                            self.ui.set_error(format!("Failed to create file: {}", e));
                         }
                     }
                 }
@@ -1138,14 +1112,10 @@ impl Heike {
                 }
             }
             "help" => {
-                self.ui.info_message = Some((
-                    "Commands: q/quit, mkdir <name>, touch <file>, cd <path>, help".into(),
-                    Instant::now()
-                ));
+                self.ui.set_info("Commands: q/quit, mkdir <name>, touch <file>, cd <path>, help".into());
             }
             _ => {
-                self.ui.error_message =
-                    Some((format!("Unknown command: {}. Type 'help' for available commands.", parts[0]), Instant::now()));
+                self.ui.set_error(format!("Unknown command: {}. Type 'help' for available commands.", parts[0]));
             }
         }
 
@@ -1163,16 +1133,7 @@ impl eframe::App for Heike {
         }
 
         // Auto-dismiss old messages
-        if let Some((_, time)) = &self.ui.error_message {
-            if time.elapsed() > Duration::from_secs(style::MESSAGE_TIMEOUT_SECS) {
-                self.ui.error_message = None;
-            }
-        }
-        if let Some((_, time)) = &self.ui.info_message {
-            if time.elapsed() > Duration::from_secs(style::MESSAGE_TIMEOUT_SECS) {
-                self.ui.info_message = None;
-            }
-        }
+        self.ui.clear_expired_messages(style::MESSAGE_TIMEOUT_SECS);
 
         // Periodically save settings (every 10 seconds)
         if self.ui.last_settings_save.elapsed() > Duration::from_secs(10) {
@@ -1372,7 +1333,7 @@ impl eframe::App for Heike {
                     self.entries.visible_entries.len(),
                     self.entries.all_entries.len()
                 ));
-                
+
                 // Show current selected file info
                 if let Some(idx) = self.selection.selected_index {
                     if let Some(entry) = self.entries.visible_entries.get(idx) {
@@ -1385,7 +1346,11 @@ impl eframe::App for Heike {
                         ));
                     }
                 }
-                
+
+                // Show sort options
+                ui.separator();
+                ui.label(self.ui.sort_options.display_string());
+
                 // Show current path
                 ui.separator();
                 style::truncated_label(ui, format!("{}", self.navigation.current_path.display()));
