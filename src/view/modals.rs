@@ -95,6 +95,26 @@ impl Heike {
                             ui.end_row();
                         });
                         ui.add_space(10.0);
+                        ui.heading("Tab Management");
+                        ui.separator();
+                        egui::Grid::new("tab_grid").striped(true).show(ui, |ui| {
+                            ui.label("Ctrl+T");
+                            ui.label("New Tab");
+                            ui.end_row();
+                            ui.label("Ctrl+W");
+                            ui.label("Close Tab");
+                            ui.end_row();
+                            ui.label("Ctrl+Tab");
+                            ui.label("Next Tab");
+                            ui.end_row();
+                            ui.label("Ctrl+Shift+Tab");
+                            ui.label("Previous Tab");
+                            ui.end_row();
+                            ui.label("Alt+1...9");
+                            ui.label("Switch to Tab 1-9");
+                            ui.end_row();
+                        });
+                        ui.add_space(10.0);
                         ui.heading("Available Bookmarks");
                         ui.separator();
                         for key in self.bookmarks.keys() {

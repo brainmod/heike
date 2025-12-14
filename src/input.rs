@@ -235,6 +235,39 @@ impl Heike {
             self.mode.set_mode(AppMode::Help);
             return;
         }
+
+        // --- Tab Management ---
+        if ctx.input(|i| i.key_pressed(egui::Key::T) && i.modifiers.ctrl) {
+            // Ctrl+T: New tab in current directory
+            self.new_tab(None);
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::W) && i.modifiers.ctrl) {
+            // Ctrl+W: Close current tab
+            self.close_current_tab();
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && !i.modifiers.shift) {
+            // Ctrl+Tab: Next tab
+            self.next_tab();
+            return;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift) {
+            // Ctrl+Shift+Tab: Previous tab
+            self.prev_tab();
+            return;
+        }
+        // Alt+1 through Alt+9 to switch tabs
+        for i in 1..=9 {
+            let key_name = i.to_string();
+            if let Some(key) = egui::Key::from_name(&key_name) {
+                if ctx.input(|input| input.modifiers.alt && input.key_pressed(key)) {
+                    self.switch_to_tab(i - 1);
+                    return;
+                }
+            }
+        }
+
         if ctx.input(|i| i.key_pressed(egui::Key::V) && !i.modifiers.shift) {
             if self.mode.mode == AppMode::Normal {
                 // Enter visual mode

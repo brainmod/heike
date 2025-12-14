@@ -2,7 +2,7 @@ use crate::config::BookmarksConfig;
 use crate::entry::FileEntry;
 use crate::io::{fuzzy_match, spawn_worker, IoCommand, IoResult};
 use crate::state::{
-    AppMode, ClipboardOp, NavigationState, SelectionState, EntryState, UIState, ModeState,
+    AppMode, ClipboardOp, NavigationState, SelectionState, EntryState, UIState, ModeState, TabsManager,
 };
 use crate::style::{self, Theme};
 use crate::view;
@@ -20,15 +20,26 @@ use std::time::{Duration, Instant};
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
+enum TabAction {
+    SwitchTo(usize),
+    Close(usize),
+    New,
+}
+
 pub struct Heike {
-    // Logical state groupings
+    // Tabs management
+    pub tabs: TabsManager,
+
+    // Current tab state (synced with active tab)
     pub navigation: NavigationState,
     pub selection: SelectionState,
     pub entries: EntryState,
+
+    // Global state
     pub ui: UIState,
     pub mode: ModeState,
 
-    // Clipboard operations
+    // Clipboard operations (shared across tabs)
     pub clipboard: HashSet<PathBuf>,
     pub clipboard_op: Option<ClipboardOp>,
 
@@ -105,7 +116,11 @@ impl Heike {
         let mut preview_registry = view::create_default_registry();
         preview_registry.set_enabled_handlers(config.previews.enabled.clone());
 
+        // Initialize tabs manager
+        let tabs = TabsManager::new(start_path.clone());
+
         let mut app = Self {
+            tabs,
             navigation: NavigationState::new(start_path.clone()),
             selection: SelectionState::new(),
             entries: EntryState::new(),
@@ -128,6 +143,97 @@ impl Heike {
         app.request_refresh();
         app
     }
+
+    // --- Tab Management ---
+
+    fn save_current_tab_state(&mut self) {
+        if let Some(tab) = self.tabs.get_active_mut() {
+            tab.current_path = self.navigation.current_path.clone();
+            tab.history = self.navigation.history.clone();
+            tab.history_index = self.navigation.history_index;
+            tab.all_entries = self.entries.all_entries.clone();
+            tab.visible_entries = self.entries.visible_entries.clone();
+            tab.parent_entries = self.entries.parent_entries.clone();
+            tab.selected_index = self.selection.selected_index;
+            tab.directory_selections = self.selection.directory_selections.clone();
+            tab.pending_selection_path = self.navigation.pending_selection_path.clone();
+            tab.update_label();
+        }
+    }
+
+    fn load_active_tab_state(&mut self) {
+        if let Some(tab) = self.tabs.get_active() {
+            self.navigation.current_path = tab.current_path.clone();
+            self.navigation.history = tab.history.clone();
+            self.navigation.history_index = tab.history_index;
+            self.entries.all_entries = tab.all_entries.clone();
+            self.entries.visible_entries = tab.visible_entries.clone();
+            self.entries.parent_entries = tab.parent_entries.clone();
+            self.selection.selected_index = tab.selected_index;
+            self.selection.directory_selections = tab.directory_selections.clone();
+            self.navigation.pending_selection_path = tab.pending_selection_path.clone();
+        }
+    }
+
+    pub(crate) fn switch_to_tab(&mut self, index: usize) {
+        if index >= self.tabs.tab_count() {
+            return;
+        }
+        // Save current tab state
+        self.save_current_tab_state();
+        // Switch to new tab
+        self.tabs.switch_to_tab(index);
+        // Load new tab state
+        self.load_active_tab_state();
+        // Refresh the new tab's directory
+        self.request_refresh();
+    }
+
+    pub(crate) fn new_tab(&mut self, path: Option<PathBuf>) {
+        let path = path.unwrap_or_else(|| self.navigation.current_path.clone());
+        // Save current tab state
+        self.save_current_tab_state();
+        // Create new tab
+        self.tabs.new_tab(path);
+        // Load new tab state
+        self.load_active_tab_state();
+        // Refresh the new tab's directory
+        self.request_refresh();
+    }
+
+    pub(crate) fn close_current_tab(&mut self) {
+        if self.tabs.tab_count() <= 1 {
+            self.ui.error_message = Some(("Cannot close the last tab".into(), Instant::now()));
+            return;
+        }
+        // Close the tab (this automatically switches to another tab)
+        if self.tabs.close_current_tab() {
+            // Load the new active tab's state
+            self.load_active_tab_state();
+            // Refresh
+            self.request_refresh();
+        }
+    }
+
+    pub(crate) fn next_tab(&mut self) {
+        if self.tabs.tab_count() <= 1 {
+            return;
+        }
+        self.save_current_tab_state();
+        self.tabs.next_tab();
+        self.load_active_tab_state();
+    }
+
+    pub(crate) fn prev_tab(&mut self) {
+        if self.tabs.tab_count() <= 1 {
+            return;
+        }
+        self.save_current_tab_state();
+        self.tabs.prev_tab();
+        self.load_active_tab_state();
+    }
+
+    // --- Directory and File Operations ---
 
     pub(crate) fn request_refresh(&mut self) {
         self.ui.is_loading = true;
@@ -1016,6 +1122,59 @@ impl eframe::App for Heike {
         let next_selection = std::cell::RefCell::new(None);
         let pending_selection = std::cell::RefCell::new(None);
         let context_action = std::cell::RefCell::new(None::<Box<dyn FnOnce(&mut Self)>>);
+
+        // Render tab bar if multiple tabs exist
+        let tab_count = self.tabs.tab_count();
+        if tab_count > 1 {
+            // Collect tab info before entering UI closure
+            let tab_labels: Vec<String> = self.tabs.tabs.iter().map(|t| t.label.clone()).collect();
+            let active_tab_index = self.tabs.active_tab;
+
+            let tab_action = std::cell::RefCell::new(None::<TabAction>);
+
+            egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    for (i, label) in tab_labels.iter().enumerate() {
+                        let is_active = i == active_tab_index;
+                        let response = ui.selectable_label(is_active, label);
+
+                        if response.clicked() {
+                            *tab_action.borrow_mut() = Some(TabAction::SwitchTo(i));
+                        }
+
+                        // Close button
+                        if response.hovered() && tab_count > 1 {
+                            let close_response = ui.small_button("×");
+                            if close_response.clicked() {
+                                *tab_action.borrow_mut() = Some(TabAction::Close(i));
+                            }
+                        }
+                    }
+
+                    // New tab button
+                    if ui.button("+").clicked() {
+                        *tab_action.borrow_mut() = Some(TabAction::New);
+                    }
+                });
+            });
+
+            // Execute tab action after UI rendering
+            if let Some(action) = tab_action.into_inner() {
+                match action {
+                    TabAction::SwitchTo(i) => self.switch_to_tab(i),
+                    TabAction::Close(i) => {
+                        if i == active_tab_index {
+                            self.close_current_tab();
+                        } else {
+                            self.save_current_tab_state();
+                            self.tabs.close_tab(i);
+                            self.load_active_tab_state();
+                        }
+                    }
+                    TabAction::New => self.new_tab(None),
+                }
+            }
+        }
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.add_space(4.0);

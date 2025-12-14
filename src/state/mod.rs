@@ -6,6 +6,7 @@ pub mod navigation;
 pub mod search;
 pub mod selection;
 pub mod sort;
+pub mod tabs;
 pub mod ui;
 
 pub use clipboard::ClipboardOp;
@@ -16,4 +17,5 @@ pub use navigation::NavigationState;
 pub use search::{SearchOptions, SearchResult};
 pub use selection::SelectionState;
 pub use sort::{SortBy, SortOrder, SortOptions};
+pub use tabs::{TabState, TabsManager};
 pub use ui::UIState;
