@@ -8,7 +8,7 @@ mod handler;
 mod handlers;
 mod registry;
 
-pub use handler::{PreviewContext, PreviewHandler};
+pub use handler::PreviewContext;
 pub use handlers::*;
 pub use registry::PreviewRegistry;
 

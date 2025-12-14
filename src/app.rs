@@ -1004,29 +1004,6 @@ impl Heike {
     // --- Drag and Drop Handling ---
     // (Currently handled in the eframe::App update method)
 
-    /// Helper to get or compute cached preview content for a file
-    /// Returns cached content if available and file hasn't changed
-    fn get_or_compute_preview(&self, entry: &FileEntry, compute: impl FnOnce() -> String) -> String {
-        // Get current file's modified time
-        if let Ok(metadata) = fs::metadata(&entry.path) {
-            if let Ok(mtime) = metadata.modified() {
-                // Try to get from cache
-                let cached = self.preview_cache.borrow().get(&entry.path, mtime);
-                if let Some(content) = cached {
-                    return content;
-                }
-
-                // Not in cache, compute and store
-                let content = compute();
-                self.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), mtime);
-                return content;
-            }
-        }
-
-        // Fallback if metadata read fails
-        compute()
-    }
-
     fn render_preview(
         &self,
         ui: &mut egui::Ui,
