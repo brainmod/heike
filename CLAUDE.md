@@ -840,11 +840,11 @@ When creating pull requests:
 
 ## Medium: Performance
 
-- [ ] **Incremental watcher updates** — Diff fs events instead of full refresh
-- [ ] **Virtual scrolling for code preview** — Only highlight visible lines
-- [ ] **Preview caching** — Memoize preview content by path + modified time
-- [ ] **Parent directory caching** — Skip re-read when parent unchanged
-- [ ] **Lazy archive preview** — Don't iterate full archive for count
+- [x] **Incremental watcher updates** — Diff fs events instead of full refresh
+- [x] **Virtual scrolling for code preview** — Only highlight visible lines (1000 line limit)
+- [x] **Preview caching** — Memoize preview content by path + modified time
+- [x] **Parent directory caching** — Skip re-read when parent unchanged
+- [x] **Lazy archive preview** — Don't iterate full archive for count
 
 ## Medium: UX Features
 
@@ -872,9 +872,9 @@ When creating pull requests:
 
 ## Medium: Error Handling
 
-- [ ] **Search progress tracking** — Track files searched, skipped, errors
-- [ ] **Retry logic for file ops** — Backoff retry for transient failures
-- [ ] **Consistent Result/Option usage** — Standardize error handling patterns
+- [x] **Search progress tracking** — Track files searched, skipped, errors
+- [ ] **Retry logic for file ops** — Backoff retry for transient failures (optional)
+- [x] **Consistent Result/Option usage** — Standardize error handling patterns (UIState helpers)
 - [x] **Message auto-dismiss** — Clear info/error messages after timeout (MESSAGE_TIMEOUT_SECS)
 
 ## Low: Security Hardening
@@ -884,9 +884,9 @@ When creating pull requests:
 
 ## Low: Code Quality
 
-- [ ] **Remove dead code** — Audit unused imports and functions
-- [ ] **Reduce cloning** — Clone only PathBuf in context menus, not full entry
-- [ ] **Fix double-press timer** — Clear stale `last_g_press` properly
+- [x] **Remove dead code** — Audit unused imports and functions
+- [x] **Reduce cloning** — Clone only PathBuf in context menus, not full entry
+- [x] **Fix double-press timer** — Clear stale `last_g_press` properly
 
 ## Low: Additional Features
 
