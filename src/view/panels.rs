@@ -211,14 +211,20 @@ impl Heike {
                                 }
 
                                 // Context menu on right-click
-                                let entry_clone = entry.clone();
+                                // Only clone the data we need, not the entire entry
+                                let entry_path = entry.path.clone();
+                                let entry_is_dir = entry.is_dir;
+                                let entry_name = entry.name.clone();
+                                let entry_size = entry.size;
+                                let entry_modified = entry.modified;
+                                let entry_perms = entry.get_permissions_string();
                                 response.context_menu(|ui| {
                                     if ui.button("📂 Open").clicked() {
-                                        if entry_clone.is_dir {
+                                        if entry_is_dir {
                                             *next_navigation.borrow_mut() =
-                                                Some(entry_clone.path.clone());
+                                                Some(entry_path.clone());
                                         } else {
-                                            let _ = open::that(&entry_clone.path);
+                                            let _ = open::that(&entry_path);
                                         }
                                         ui.close();
                                     }
@@ -226,7 +232,7 @@ impl Heike {
                                     ui.separator();
 
                                     if ui.button("📋 Copy (y)").clicked() {
-                                        let path = entry_clone.path.clone();
+                                        let path = entry_path.clone();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
                                                 app.clipboard.clear();
@@ -239,7 +245,7 @@ impl Heike {
                                     }
 
                                     if ui.button("✂️ Cut (x)").clicked() {
-                                        let path = entry_clone.path.clone();
+                                        let path = entry_path.clone();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
                                                 app.clipboard.clear();
@@ -263,7 +269,7 @@ impl Heike {
 
                                     if ui.button("✏️ Rename (r)").clicked() {
                                         *next_selection.borrow_mut() = Some(row_index);
-                                        let name = entry_clone.name.clone();
+                                        let name = entry_name.clone();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
                                                 app.mode.command_buffer = name;
@@ -285,10 +291,10 @@ impl Heike {
                                     ui.separator();
 
                                     if ui.button("ℹ️ Properties").clicked() {
-                                        let size = entry_clone.size;
-                                        let modified = entry_clone.modified;
-                                        let is_dir = entry_clone.is_dir;
-                                        let perms = entry_clone.get_permissions_string();
+                                        let size = entry_size;
+                                        let modified = entry_modified;
+                                        let is_dir = entry_is_dir;
+                                        let perms = entry_perms.clone();
                                         *context_action.borrow_mut() =
                                             Some(Box::new(move |app: &mut Self| {
                                                 app.ui.info_message =
