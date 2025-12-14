@@ -37,6 +37,19 @@ impl PreviewHandler for ArchivePreviewHandler {
         entry: &FileEntry,
         _context: &PreviewContext,
     ) -> Result<(), String> {
+        // File size check - archives over 100MB may be slow to parse
+        const ARCHIVE_SIZE_LIMIT: u64 = 100 * 1024 * 1024; // 100MB for archives
+        if entry.size > ARCHIVE_SIZE_LIMIT {
+            ui.centered_and_justified(|ui| {
+                ui.label(format!(
+                    "Archive too large for preview ({} > {})",
+                    bytesize::ByteSize(entry.size),
+                    bytesize::ByteSize(ARCHIVE_SIZE_LIMIT)
+                ));
+            });
+            return Ok(());
+        }
+
         // For zip files, we can get the exact total count cheaply (already indexed)
         // For tar files, getting the total requires full iteration, so we indicate if truncated
         let result = if entry.extension == "zip" {

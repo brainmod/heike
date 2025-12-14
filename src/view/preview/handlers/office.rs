@@ -1,6 +1,7 @@
 // Office document preview handler (docx, xlsx, etc.)
 
 use crate::entry::FileEntry;
+use crate::style;
 use crate::view::preview::handler::{PreviewContext, PreviewHandler};
 use calamine::{open_workbook, Reader, Xls, Xlsx};
 use docx_rs::read_docx;
@@ -191,6 +192,18 @@ impl PreviewHandler for OfficePreviewHandler {
         entry: &FileEntry,
         _context: &PreviewContext,
     ) -> Result<(), String> {
+        // File size check to prevent blocking UI on large documents
+        if entry.size > style::MAX_PREVIEW_SIZE {
+            ui.centered_and_justified(|ui| {
+                ui.label(format!(
+                    "Document too large for preview ({} > {})",
+                    bytesize::ByteSize(entry.size),
+                    bytesize::ByteSize(style::MAX_PREVIEW_SIZE)
+                ));
+            });
+            return Ok(());
+        }
+
         match entry.extension.as_str() {
             "docx" | "doc" => self.render_docx(ui, entry),
             "xlsx" | "xls" => self.render_xlsx(ui, entry),

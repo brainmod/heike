@@ -15,7 +15,8 @@ pub struct SelectionState {
 impl SelectionState {
     pub fn new() -> Self {
         Self {
-            selected_index: Some(0),
+            // Start with None - selection is set when entries load
+            selected_index: None,
             multi_selection: HashSet::new(),
             directory_selections: HashMap::new(),
             last_selection_change: Instant::now(),

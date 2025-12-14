@@ -1,6 +1,7 @@
 // PDF preview handler
 
 use crate::entry::FileEntry;
+use crate::style;
 use crate::view::preview::handler::{PreviewContext, PreviewHandler};
 use eframe::egui;
 use lopdf::Document as PdfDocument;
@@ -28,6 +29,18 @@ impl PreviewHandler for PdfPreviewHandler {
         entry: &FileEntry,
         _context: &PreviewContext,
     ) -> Result<(), String> {
+        // File size check to prevent blocking UI on large PDFs
+        if entry.size > style::MAX_PREVIEW_SIZE {
+            ui.centered_and_justified(|ui| {
+                ui.label(format!(
+                    "PDF too large for preview ({} > {})",
+                    bytesize::ByteSize(entry.size),
+                    bytesize::ByteSize(style::MAX_PREVIEW_SIZE)
+                ));
+            });
+            return Ok(());
+        }
+
         ui.vertical_centered(|ui| {
             ui.add_space(20.0);
             ui.label(egui::RichText::new("📕 PDF Document").size(18.0));

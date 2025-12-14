@@ -1,11 +1,15 @@
 use crate::entry::FileEntry;
 use crate::state::{SearchOptions, SearchResult};
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread;
 
 use super::directory::read_directory;
 use super::search::perform_search;
+
+/// Maximum number of pending commands in the worker queue.
+/// This prevents memory exhaustion from rapid command submissions.
+const COMMAND_QUEUE_CAPACITY: usize = 16;
 
 pub enum IoCommand {
     LoadDirectory(PathBuf, bool),
@@ -34,9 +38,11 @@ pub enum IoResult {
 
 pub fn spawn_worker(
     ctx: eframe::egui::Context,
-) -> (Sender<IoCommand>, Receiver<IoResult>) {
-    let (cmd_tx, cmd_rx) = channel();
-    let (res_tx, res_rx) = channel();
+) -> (SyncSender<IoCommand>, Receiver<IoResult>) {
+    // Use bounded channels to prevent memory exhaustion from rapid commands
+    let (cmd_tx, cmd_rx) = sync_channel(COMMAND_QUEUE_CAPACITY);
+    // Results channel can be larger since results are consumed quickly by UI
+    let (res_tx, res_rx) = sync_channel(64);
 
     let ctx_clone = ctx.clone();
     thread::spawn(move || {

@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
@@ -42,8 +42,8 @@ pub struct Heike {
     pub clipboard: HashSet<PathBuf>,
     pub clipboard_op: Option<ClipboardOp>,
 
-    // Async I/O channels
-    pub command_tx: Sender<IoCommand>,
+    // Async I/O channels (bounded to prevent memory exhaustion)
+    pub command_tx: SyncSender<IoCommand>,
     pub result_rx: Receiver<IoResult>,
     pub watcher: Option<Box<dyn Watcher>>,
     pub watcher_rx: Receiver<Result<Event, notify::Error>>,
@@ -517,15 +517,21 @@ impl Heike {
                 IoResult::SearchCompleted(results) => {
                     self.ui.search_in_progress = false;
                     let result_count = results.len();
+                    // Handle empty results: use None-like value (usize::MAX) to indicate no selection
+                    let selected_index = if results.is_empty() { usize::MAX } else { 0 };
                     self.mode.set_mode(AppMode::SearchResults {
                         query: self.ui.search_query.clone(),
                         results,
-                        selected_index: 0,
+                        selected_index,
                     });
-                    self.ui.set_info(format!(
-                        "Found {} matches in {} files",
-                        result_count, self.ui.search_file_count
-                    ));
+                    if result_count == 0 {
+                        self.ui.set_info("No matches found".into());
+                    } else {
+                        self.ui.set_info(format!(
+                            "Found {} matches in {} files",
+                            result_count, self.ui.search_file_count
+                        ));
+                    }
                 }
                 IoResult::SearchProgress {
                     files_searched,
@@ -623,10 +629,8 @@ impl Heike {
         }
 
         let idx = self.navigation.history_index + 1;
-        loop {
-            if idx >= self.navigation.history.len() {
-                break;
-            }
+        // idx doesn't change - when we remove at idx, the next element shifts down to idx
+        while idx < self.navigation.history.len() {
             let target = self.navigation.history[idx].clone();
             if target.is_dir() {
                 self.navigation.history_index = idx;
@@ -634,6 +638,9 @@ impl Heike {
                 self.finish_navigation();
                 return;
             }
+            // Remove invalid (non-directory) entry; next element shifts to current idx
+            // so we don't increment idx. history_index doesn't change since entries
+            // before current position don't shift.
             self.navigation.history.remove(idx);
         }
 
@@ -782,11 +789,15 @@ impl Heike {
             if let Some(entry) = self.entries.visible_entries.get(idx) {
                 let new_name = self.mode.command_buffer.trim();
                 if !new_name.is_empty() {
-                    let new_path = entry.path.parent().unwrap().join(new_name);
-                    if let Err(e) = fs::rename(&entry.path, &new_path) {
-                        self.ui.set_error(format!("Rename failed: {}", e));
+                    if let Some(parent) = entry.path.parent() {
+                        let new_path = parent.join(new_name);
+                        if let Err(e) = fs::rename(&entry.path, &new_path) {
+                            self.ui.set_error(format!("Rename failed: {}", e));
+                        } else {
+                            self.ui.set_info("Renamed successfully".into());
+                        }
                     } else {
-                        self.ui.set_info("Renamed successfully".into());
+                        self.ui.set_error("Cannot rename root path".into());
                     }
                 }
             }

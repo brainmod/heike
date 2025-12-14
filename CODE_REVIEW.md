@@ -6,6 +6,30 @@
 
 ---
 
+## Issues Addressed in This Session
+
+The following issues from this review have been fixed:
+
+### Phase 1: Critical Fixes
+- [x] **navigate_forward() loop bug** - Rewrote to use `while` loop pattern matching `navigate_back()`
+- [x] **perform_rename() panic** - Added parent path check with error handling
+- [x] **Empty SearchResults crash** - Added check for empty results before setting selected_index
+- [x] **Match position calculation** - Fixed to find actual match position within lines
+
+### Phase 2: UI Responsiveness
+- [x] **File size checks** - Added to PDF, Office, and Archive preview handlers
+- [x] **Bounded channels** - Replaced unbounded `channel()` with `sync_channel()` (16 command / 64 result capacity)
+
+### Phase 3: Code Quality
+- [x] **DOUBLE_PRESS_MS constant** - Replaced 3 hardcoded 500ms values in input.rs
+- [x] **State initialization** - Aligned TabState and SelectionState to both use `None` for selected_index
+
+### Phase 4: Documentation
+- [x] **README feature status** - Updated checkboxes for tabs, bookmarks, bulk rename, office preview
+- [x] **Undocumented keybindings** - Added sort controls, bookmarks, bulk rename to README
+
+---
+
 ## Executive Summary
 
 This comprehensive review identified **70+ issues** across the Heike codebase, ranging from critical bugs to documentation inconsistencies. The codebase shows solid architecture with good separation of concerns, but has several areas requiring attention for production readiness.
