@@ -60,6 +60,10 @@ pub struct Heike {
 
     // Caching (interior mutability for preview cache)
     pub preview_cache: RefCell<view::PreviewCache>,
+
+    // Parent directory cache to avoid redundant reads
+    pub cached_parent_path: Option<PathBuf>,
+    pub cached_show_hidden: bool,
 }
 impl Heike {
     pub fn new(ctx: egui::Context, config: crate::config::Config, cli_start_dir: Option<PathBuf>) -> Self {
@@ -138,6 +142,8 @@ impl Heike {
             bookmarks: config.bookmarks.clone(),
             preview_registry,
             preview_cache: RefCell::new(view::PreviewCache::new()),
+            cached_parent_path: None,
+            cached_show_hidden: false,
         };
 
         app.request_refresh();
@@ -244,12 +250,25 @@ impl Heike {
             self.ui.show_hidden,
         ));
         if let Some(parent) = self.navigation.current_path.parent() {
-            let _ = self.command_tx.send(IoCommand::LoadParent(
-                parent.to_path_buf(),
-                self.ui.show_hidden,
-            ));
+            let parent_path = parent.to_path_buf();
+
+            // Only reload parent if it's different from the cached one or show_hidden changed
+            let cache_valid = self.cached_parent_path.as_ref() == Some(&parent_path)
+                && self.cached_show_hidden == self.ui.show_hidden;
+
+            if !cache_valid {
+                let _ = self.command_tx.send(IoCommand::LoadParent(
+                    parent_path.clone(),
+                    self.ui.show_hidden,
+                ));
+                // Mark that we've requested this parent (will be updated when result arrives)
+                self.cached_parent_path = Some(parent_path);
+                self.cached_show_hidden = self.ui.show_hidden;
+            }
+            // else: parent is cached and settings unchanged, skip redundant read
         } else {
             self.entries.parent_entries.clear();
+            self.cached_parent_path = None;
         }
     }
 
@@ -387,6 +406,18 @@ impl Heike {
 
     fn handle_fs_event(&mut self, event: Event) {
         use notify::EventKind;
+
+        // Check if event affects the cached parent directory
+        if let Some(cached_parent) = &self.cached_parent_path {
+            let affects_parent = event.paths.iter().any(|p| {
+                p.parent() == Some(cached_parent.as_path())
+                    || p.as_path() == cached_parent.as_path()
+            });
+            if affects_parent {
+                // Invalidate parent cache - parent directory has changed
+                self.cached_parent_path = None;
+            }
+        }
 
         // Only handle events for the current directory
         let in_current_dir = event.paths.iter().any(|p| {
