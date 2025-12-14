@@ -598,6 +598,143 @@ impl Heike {
         self.request_refresh();
     }
 
+    pub(crate) fn enter_bulk_rename_mode(&mut self) {
+        // Determine which files to rename
+        let files_to_rename: Vec<PathBuf> = if !self.selection.multi_selection.is_empty() {
+            // Use multi-selection if available
+            self.selection
+                .multi_selection
+                .iter()
+                .cloned()
+                .collect()
+        } else if let Some(idx) = self.selection.selected_index {
+            // Use current selection if no multi-selection
+            if let Some(entry) = self.entries.visible_entries.get(idx) {
+                vec![entry.path.clone()]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        if files_to_rename.is_empty() {
+            self.ui.error_message = Some(("No files selected for bulk rename".into(), Instant::now()));
+            return;
+        }
+
+        // Create edit buffer with one filename per line
+        let edit_buffer = files_to_rename
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .map(|n| n.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        self.mode.set_mode(AppMode::BulkRename {
+            original_paths: files_to_rename,
+            edit_buffer,
+            cursor_line: 0,
+        });
+        self.mode.focus_input = true;
+    }
+
+    pub(crate) fn apply_bulk_rename(&mut self) {
+        if let AppMode::BulkRename {
+            original_paths,
+            edit_buffer,
+            ..
+        } = &self.mode.mode
+        {
+            let new_names: Vec<&str> = edit_buffer.lines().collect();
+
+            // Validation: number of lines must match number of files
+            if new_names.len() != original_paths.len() {
+                self.ui.error_message = Some((
+                    format!(
+                        "Line count mismatch: {} files but {} names",
+                        original_paths.len(),
+                        new_names.len()
+                    ),
+                    Instant::now(),
+                ));
+                return;
+            }
+
+            // Validation: no empty names
+            if new_names.iter().any(|n| n.trim().is_empty()) {
+                self.ui.error_message = Some(("Empty filename not allowed".into(), Instant::now()));
+                return;
+            }
+
+            // Validation: no duplicate names
+            let mut seen = std::collections::HashSet::new();
+            for name in &new_names {
+                if !seen.insert(name.trim()) {
+                    self.ui.error_message = Some((
+                        format!("Duplicate filename: {}", name.trim()),
+                        Instant::now(),
+                    ));
+                    return;
+                }
+            }
+
+            // Perform renames
+            let mut success_count = 0;
+            let mut errors = Vec::new();
+
+            for (old_path, new_name) in original_paths.iter().zip(new_names.iter()) {
+                let new_name = new_name.trim();
+                if let Some(parent) = old_path.parent() {
+                    let new_path = parent.join(new_name);
+
+                    // Skip if name hasn't changed
+                    if let Some(old_name) = old_path.file_name().and_then(|n| n.to_str()) {
+                        if old_name == new_name {
+                            success_count += 1;
+                            continue;
+                        }
+                    }
+
+                    // Check if target already exists (unless it's a case-only change)
+                    if new_path.exists() && new_path != *old_path {
+                        errors.push(format!("{}: target already exists", new_name));
+                        continue;
+                    }
+
+                    match fs::rename(old_path, &new_path) {
+                        Ok(()) => success_count += 1,
+                        Err(e) => errors.push(format!("{}: {}", new_name, e)),
+                    }
+                }
+            }
+
+            // Clear multi-selection after bulk rename
+            self.selection.multi_selection.clear();
+
+            // Show results
+            if !errors.is_empty() {
+                self.ui.error_message = Some((
+                    format!(
+                        "Renamed {}/{} files. Errors: {}",
+                        success_count,
+                        original_paths.len(),
+                        errors.join(", ")
+                    ),
+                    Instant::now(),
+                ));
+            } else {
+                self.ui.info_message = Some((
+                    format!("Successfully renamed {} file(s)", success_count),
+                    Instant::now(),
+                ));
+            }
+
+            self.mode.set_mode(AppMode::Normal);
+            self.request_refresh();
+        }
+    }
+
     // --- Selection Validation ---
 
     fn validate_selection(&mut self) {
@@ -966,6 +1103,9 @@ impl eframe::App for Heike {
                         AppMode::Rename => {
                             ui.colored_label(egui::Color32::ORANGE, "RENAME");
                         }
+                        AppMode::BulkRename { .. } => {
+                            ui.colored_label(egui::Color32::ORANGE, "BULK RENAME");
+                        }
                         AppMode::DeleteConfirm => {
                             ui.colored_label(egui::Color32::RED, "CONFIRM DELETE?");
                         }
@@ -1231,6 +1371,7 @@ impl eframe::App for Heike {
                 self.render_help_modal(ctx);
                 self.render_search_input_modal(ctx);
                 self.render_input_modal(ctx);
+                self.render_bulk_rename_modal(ctx);
 
                 // Strip-based layout with three panes and dividers
                 use egui_extras::{Size, StripBuilder};

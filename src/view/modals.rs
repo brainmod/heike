@@ -75,6 +75,9 @@ impl Heike {
                             ui.label("d / r");
                             ui.label("Delete / Rename");
                             ui.end_row();
+                            ui.label("R (Shift+r)");
+                            ui.label("Bulk Rename (vidir-style)");
+                            ui.end_row();
                             ui.label("?");
                             ui.label("Toggle Help");
                             ui.end_row();
@@ -206,5 +209,65 @@ impl Heike {
                     });
                 });
         }
+    }
+
+    pub(crate) fn render_bulk_rename_modal(&mut self, ctx: &egui::Context) {
+        // Extract the data we need before entering the closure
+        let is_bulk_rename = matches!(self.mode.mode, AppMode::BulkRename { .. });
+        if !is_bulk_rename {
+            return;
+        }
+
+        let (file_count, focus_input) = if let AppMode::BulkRename {
+            original_paths, ..
+        } = &self.mode.mode
+        {
+            (original_paths.len(), self.mode.focus_input)
+        } else {
+            return;
+        };
+
+        egui::Window::new("Bulk Rename")
+            .collapsible(false)
+            .resizable(true)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .default_width(style::modal_width(ctx) * 1.2)
+            .default_height(style::modal_max_height(ctx) * 0.8)
+            .show(ctx, |ui| {
+                ui.label(format!("Editing {} files (one per line):", file_count));
+                ui.label(
+                    egui::RichText::new("Press Ctrl+Enter to apply, Escape to cancel")
+                        .weak()
+                        .italics(),
+                );
+                ui.separator();
+
+                // Get mutable reference to edit_buffer
+                if let AppMode::BulkRename { edit_buffer, .. } = &mut self.mode.mode {
+                    // Multi-line text editor
+                    let response = ui.add_sized(
+                        [ui.available_width(), ui.available_height() - 60.0],
+                        egui::TextEdit::multiline(edit_buffer)
+                            .font(egui::TextStyle::Monospace)
+                            .code_editor()
+                            .desired_width(f32::INFINITY),
+                    );
+
+                    if focus_input {
+                        response.request_focus();
+                        self.mode.focus_input = false;
+                    }
+                }
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    if ui.button("Apply (Ctrl+Enter)").clicked() {
+                        self.apply_bulk_rename();
+                    }
+                    if ui.button("Cancel (Esc)").clicked() {
+                        self.mode.set_mode(AppMode::Normal);
+                    }
+                });
+            });
     }
 }

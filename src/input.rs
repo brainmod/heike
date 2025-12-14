@@ -42,7 +42,18 @@ impl Heike {
     }
 
     pub fn handle_input(&mut self, ctx: &egui::Context) {
-        // 1. Modal Inputs (Command, Filter, Rename, SearchInput)
+        // 1. Bulk Rename Mode
+        if matches!(self.mode.mode, AppMode::BulkRename { .. }) {
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.ctrl) {
+                self.apply_bulk_rename();
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.mode.set_mode(AppMode::Normal);
+            }
+            return;
+        }
+
+        // 2. Modal Inputs (Command, Filter, Rename, SearchInput)
         if matches!(
             self.mode.mode,
             AppMode::Command | AppMode::Filtering | AppMode::Rename | AppMode::SearchInput
@@ -83,7 +94,7 @@ impl Heike {
             return;
         }
 
-        // 2. Confirmation Modals
+        // 3. Confirmation Modals
         if self.mode.mode == AppMode::DeleteConfirm {
             if ctx.input(|i| i.key_pressed(egui::Key::Y) || i.key_pressed(egui::Key::Enter)) {
                 self.perform_delete();
@@ -326,7 +337,11 @@ impl Heike {
         if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
             self.mode.set_mode(AppMode::DeleteConfirm);
         }
-        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R)) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.shift) {
+            // Shift+R: Bulk rename - rename multiple files at once
+            self.enter_bulk_rename_mode();
+        }
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R) && !i.modifiers.shift) {
             if let Some(idx) = self.selection.selected_index {
                 if let Some(entry) = self.entries.visible_entries.get(idx) {
                     self.mode.command_buffer = entry.name.clone();
