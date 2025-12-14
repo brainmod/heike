@@ -18,6 +18,8 @@ pub struct UIState {
     pub search_options: SearchOptions,
     pub search_in_progress: bool,
     pub search_file_count: usize,
+    pub search_files_skipped: usize,
+    pub search_errors: usize,
     pub last_settings_save: Instant,
 }
 
@@ -37,6 +39,8 @@ impl UIState {
             search_options: SearchOptions::default(),
             search_in_progress: false,
             search_file_count: 0,
+            search_files_skipped: 0,
+            search_errors: 0,
             last_settings_save: Instant::now(),
         }
     }

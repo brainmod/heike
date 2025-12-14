@@ -306,7 +306,9 @@ pub fn perform_search(
     progress_tx: &Sender<IoResult>,
 ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error>> {
     let mut all_results = Vec::new();
-    let mut file_count = 0;
+    let mut files_searched = 0;
+    let mut files_skipped = 0;
+    let mut errors = 0;
 
     let matcher = RegexMatcherBuilder::new()
         .case_insensitive(!options.case_sensitive)
@@ -317,16 +319,17 @@ pub fn perform_search(
         .build();
 
     for entry in walker {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => {
+                errors += 1;
+                continue;
+            }
+        };
         let path = entry.path();
 
         if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
             continue;
-        }
-
-        file_count += 1;
-        if file_count % 10 == 0 {
-            let _ = progress_tx.send(IoResult::SearchProgress(file_count));
         }
 
         let extension = path
@@ -334,6 +337,30 @@ pub fn perform_search(
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
+
+        // Check if we should skip this file type
+        let should_search = match extension.as_str() {
+            "pdf" => options.search_pdfs,
+            "zip" => options.search_archives,
+            "docx" | "doc" | "xlsx" | "xls" => true,
+            _ => true, // Text files
+        };
+
+        if !should_search {
+            files_skipped += 1;
+            continue;
+        }
+
+        files_searched += 1;
+
+        // Send progress update every 10 files
+        if files_searched % 10 == 0 {
+            let _ = progress_tx.send(IoResult::SearchProgress {
+                files_searched,
+                files_skipped,
+                errors,
+            });
+        }
 
         let mut file_results = match extension.as_str() {
             "pdf" if options.search_pdfs => search_pdf_content(path, query, options.case_sensitive),
@@ -345,7 +372,10 @@ pub fn perform_search(
             _ => {
                 match search_text_file(path, &matcher, options.max_results - all_results.len()) {
                     Ok(results) => results,
-                    Err(_) => Vec::new(),
+                    Err(_) => {
+                        errors += 1;
+                        Vec::new()
+                    }
                 }
             }
         };
@@ -356,6 +386,13 @@ pub fn perform_search(
             break;
         }
     }
+
+    // Send final progress update
+    let _ = progress_tx.send(IoResult::SearchProgress {
+        files_searched,
+        files_skipped,
+        errors,
+    });
 
     Ok(all_results)
 }

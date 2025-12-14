@@ -531,8 +531,14 @@ impl Heike {
                         Instant::now(),
                     ));
                 }
-                IoResult::SearchProgress(count) => {
-                    self.ui.search_file_count = count;
+                IoResult::SearchProgress {
+                    files_searched,
+                    files_skipped,
+                    errors,
+                } => {
+                    self.ui.search_file_count = files_searched;
+                    self.ui.search_files_skipped = files_skipped;
+                    self.ui.search_errors = errors;
                 }
                 IoResult::Error(msg) => {
                     self.ui.is_loading = false;

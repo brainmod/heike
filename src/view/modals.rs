@@ -173,7 +173,10 @@ impl Heike {
                                 && !self.ui.search_query.is_empty()
                             {
                                 self.ui.search_in_progress = true;
+                                // Reset all search statistics
                                 self.ui.search_file_count = 0;
+                                self.ui.search_files_skipped = 0;
+                                self.ui.search_errors = 0;
                                 let _ = self.command_tx.send(IoCommand::SearchContent {
                                     query: self.ui.search_query.clone(),
                                     root_path: self.navigation.current_path.clone(),
@@ -191,8 +194,10 @@ impl Heike {
                             ui.horizontal(|ui| {
                                 ui.spinner();
                                 ui.label(format!(
-                                    "Searching... ({} files)",
-                                    self.ui.search_file_count
+                                    "Searching... ({} searched, {} skipped, {} errors)",
+                                    self.ui.search_file_count,
+                                    self.ui.search_files_skipped,
+                                    self.ui.search_errors
                                 ));
                             });
                         }
