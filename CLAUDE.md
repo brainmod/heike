@@ -17,21 +17,23 @@
 ```
 heike/
 ├── src/
-│   ├── main.rs             # Entry point (67 lines)
-│   ├── app.rs              # Heike struct, update loop (~1600 lines)
-│   ├── entry.rs            # FileEntry struct (99 lines)
+│   ├── main.rs             # Entry point (76 lines)
+│   ├── app.rs              # Heike struct, update loop (1623 lines)
+│   ├── entry.rs            # FileEntry struct (203 lines)
 │   ├── config.rs           # Configuration system (TOML)
-│   ├── input.rs            # Keyboard handling (extracted)
-│   ├── style.rs            # Theme, layout constants (76 lines)
+│   ├── input.rs            # Keyboard handling (575 lines)
+│   ├── style.rs            # Theme, layout constants (69 lines)
 │   ├── state/
 │   │   ├── mod.rs          # State module exports
 │   │   ├── mode.rs         # AppMode enum
+│   │   ├── mode_state.rs   # ModeState wrapper
 │   │   ├── clipboard.rs    # ClipboardOp enum
 │   │   ├── search.rs       # SearchResult, SearchOptions
 │   │   ├── tabs.rs         # TabsManager, TabState
 │   │   ├── navigation.rs   # NavigationState
 │   │   ├── selection.rs    # SelectionState
-│   │   ├── entry.rs        # EntryState
+│   │   ├── entries.rs      # EntryState
+│   │   ├── sort.rs         # SortState
 │   │   └── ui.rs           # UIState
 │   ├── io/
 │   │   ├── mod.rs          # IO module exports
@@ -40,8 +42,8 @@ heike/
 │   │   └── worker.rs       # Async worker thread (78 lines)
 │   └── view/
 │       ├── mod.rs          # View module exports
-│       ├── panels.rs       # Miller columns rendering (322 lines)
-│       ├── modals.rs       # Dialogs/popups (extracted)
+│       ├── panels.rs       # Miller columns rendering (420 lines)
+│       ├── modals.rs       # Dialogs/popups (312 lines)
 │       └── preview/
 │           ├── mod.rs      # Preview system core
 │           ├── handler.rs  # PreviewHandler trait
@@ -869,23 +871,24 @@ When creating pull requests:
 ## High: Code Organization
 
 - [x] **Split monolith** — Extract into modules:
-  - [x] `src/app.rs` — Heike struct, update loop (2178 lines)
-  - [x] `src/entry.rs` — FileEntry (99 lines)
+  - [x] `src/app.rs` — Heike struct, update loop (1623 lines)
+  - [x] `src/entry.rs` — FileEntry (203 lines)
   - [x] `src/state/mod.rs` — Mode, Clipboard, Search state structs
   - [x] `src/io/mod.rs` — Directory reading, search, worker thread
-  - [x] `src/view/mod.rs` — Preview rendering (799 lines in preview.rs)
-  - [ ] `src/input.rs` — Keyboard handling (placeholder only, still in app.rs)
-  - [x] `src/style.rs` — Theme, layout constants (76 lines)
-- [ ] **Extract remaining UI** — Move from app.rs to view/:
-  - [ ] `src/view/panels.rs` — Miller columns rendering
-  - [ ] `src/view/modals.rs` — Dialogs and popups
+  - [x] `src/view/mod.rs` — Preview rendering, panels, modals
+  - [x] `src/input.rs` — Keyboard handling (575 lines)
+  - [x] `src/style.rs` — Theme, layout constants (69 lines)
+- [x] **Extract UI components** — Extracted to view/:
+  - [x] `src/view/panels.rs` — Miller columns rendering (420 lines)
+  - [x] `src/view/modals.rs` — Dialogs and popups (312 lines)
 - [ ] **Group Heike fields** — Split into `NavigationState`, `EntryState`, `ModeState`, etc.
 - [x] **Layout constants module** — All constants in `src/style.rs`
-- [ ] **Modularize preview components** — Make preview rendering pluggable:
-  - [ ] Create `PreviewHandler` trait for extensible preview types
-  - [ ] Allow config to enable/disable specific preview components
-  - [ ] Design for Yazi plugin compatibility (e.g., Lua preview plugins)
-  - [ ] Document plugin architecture for community extensions
+- [x] **Modularize preview components** — Make preview rendering pluggable:
+  - [x] Create `PreviewHandler` trait for extensible preview types
+  - [x] Individual handler implementations (text, markdown, image, pdf, archive, audio, office, binary, directory)
+  - [x] Preview caching system with LRU eviction
+  - [ ] Config enable/disable specific preview components (planned)
+  - [ ] Yazi plugin compatibility (future enhancement)
 
 ## Medium: Performance
 
