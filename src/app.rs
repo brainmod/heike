@@ -7,7 +7,6 @@ use crate::state::{
 use crate::style::{self, Theme};
 use crate::view;
 
-use chrono::{DateTime, Local};
 use eframe::egui;
 use notify::{Event, RecursiveMode, Watcher};
 use std::cell::RefCell;
@@ -1002,23 +1001,7 @@ impl Heike {
             None => return,
         };
 
-        // Add file type to metadata header
-        style::truncated_label(
-            ui,
-            egui::RichText::new(format!("{} {}", entry.get_icon(), entry.display_name())).heading(),
-        );
-        ui.add_space(5.0);
-        ui.label(format!("Type: {}", entry.get_file_type()));
-        style::truncated_label(
-            ui,
-            format!("Size: {}", bytesize::ByteSize(entry.size)),
-        );
-        let datetime: DateTime<Local> = entry.modified.into();
-        ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
-        ui.label(format!("Permissions: {}", entry.get_permissions_string()));
-        ui.separator();
-
-        // Use new modular preview system
+        // Use modular preview system (header is rendered inside)
         view::render_preview(
             ui,
             entry,
