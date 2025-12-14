@@ -83,7 +83,11 @@ impl Heike {
                 .unwrap_or_else(|| env::current_dir().unwrap_or_default())
         };
 
-        let (cmd_tx, res_rx) = spawn_worker(ctx.clone());
+        let worker = spawn_worker(ctx.clone());
+        let cmd_tx = worker.command_tx;
+        let res_rx = worker.result_rx;
+        // Note: worker.thread_handle is dropped here, but the thread continues running
+        // The worker will exit gracefully when command_tx is dropped (on app close)
         let (_watch_tx, watch_rx) = channel();
 
         // Parse theme from config

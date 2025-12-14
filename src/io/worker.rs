@@ -2,7 +2,7 @@ use crate::entry::FileEntry;
 use crate::state::{SearchOptions, SearchResult};
 use std::path::PathBuf;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use super::directory::read_directory;
 use super::search::perform_search;
@@ -19,6 +19,8 @@ pub enum IoCommand {
         root_path: PathBuf,
         options: SearchOptions,
     },
+    /// Graceful shutdown signal - worker thread will exit after receiving this
+    Shutdown,
 }
 
 pub enum IoResult {
@@ -36,18 +38,40 @@ pub enum IoResult {
     Error(String),
 }
 
-pub fn spawn_worker(
-    ctx: eframe::egui::Context,
-) -> (SyncSender<IoCommand>, Receiver<IoResult>) {
+/// Worker thread handle for graceful shutdown
+pub struct WorkerHandle {
+    pub command_tx: SyncSender<IoCommand>,
+    pub result_rx: Receiver<IoResult>,
+    thread_handle: Option<JoinHandle<()>>,
+}
+
+impl WorkerHandle {
+    /// Request graceful shutdown and wait for worker to finish
+    pub fn shutdown(mut self) {
+        // Send shutdown signal (ignore error if channel is closed)
+        let _ = self.command_tx.send(IoCommand::Shutdown);
+
+        // Wait for thread to finish
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+pub fn spawn_worker(ctx: eframe::egui::Context) -> WorkerHandle {
     // Use bounded channels to prevent memory exhaustion from rapid commands
     let (cmd_tx, cmd_rx) = sync_channel(COMMAND_QUEUE_CAPACITY);
     // Results channel can be larger since results are consumed quickly by UI
     let (res_tx, res_rx) = sync_channel(64);
 
     let ctx_clone = ctx.clone();
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         while let Ok(cmd) = cmd_rx.recv() {
             match cmd {
+                IoCommand::Shutdown => {
+                    // Graceful shutdown - exit the loop
+                    break;
+                }
                 IoCommand::LoadDirectory(path, hidden) => match read_directory(&path, hidden) {
                     Ok(entries) => {
                         let _ = res_tx.send(IoResult::DirectoryLoaded {
@@ -84,5 +108,9 @@ pub fn spawn_worker(
         }
     });
 
-    (cmd_tx, res_rx)
+    WorkerHandle {
+        command_tx: cmd_tx,
+        result_rx: res_rx,
+        thread_handle: Some(handle),
+    }
 }

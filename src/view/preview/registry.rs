@@ -34,16 +34,6 @@ impl PreviewRegistry {
         self.handlers.sort_by_key(|h| h.priority());
     }
 
-    /// Enable a handler by name
-    pub fn enable_handler(&mut self, name: &str) {
-        self.enabled_handlers.insert(name.to_string());
-    }
-
-    /// Disable a handler by name
-    pub fn disable_handler(&mut self, name: &str) {
-        self.enabled_handlers.remove(name);
-    }
-
     /// Check if a handler is enabled
     pub fn is_enabled(&self, name: &str) -> bool {
         self.enabled_handlers.contains(name)
@@ -84,11 +74,6 @@ impl PreviewRegistry {
             }
         }
         false
-    }
-
-    /// Get list of all registered handler names
-    pub fn handler_names(&self) -> Vec<String> {
-        self.handlers.iter().map(|h| h.name().to_string()).collect()
     }
 
     /// Get list of enabled handler names

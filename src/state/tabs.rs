@@ -48,15 +48,6 @@ impl TabState {
             .unwrap_or("/")
             .to_string();
     }
-
-    pub fn push_history(&mut self, path: PathBuf) {
-        // Remove any forward history
-        self.history.truncate(self.history_index + 1);
-        self.history.push(path.clone());
-        self.history_index += 1;
-        self.current_path = path;
-        self.update_label();
-    }
 }
 
 /// Manages multiple tabs

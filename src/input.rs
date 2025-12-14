@@ -525,7 +525,7 @@ impl Heike {
             if elapsed > Duration::from_millis(style::DOUBLE_PRESS_MS) {
                 // Timeout - clear the 'g' press
                 self.selection.last_g_press = None;
-            } else if elapsed > Duration::from_millis(10) {
+            } else if elapsed > Duration::from_millis(style::KEY_SEQUENCE_DELAY_MS) {
                 // Short delay to allow keyboard input processing
                 // Check for any single-character key press for bookmarks
                 let bookmark_key = ctx.input(|i| {

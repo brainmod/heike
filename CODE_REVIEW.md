@@ -28,6 +28,21 @@ The following issues from this review have been fixed:
 - [x] **README feature status** - Updated checkboxes for tabs, bookmarks, bulk rename, office preview
 - [x] **Undocumented keybindings** - Added sort controls, bookmarks, bulk rename to README
 
+### Phase 5: Additional Code Quality (Continued Session)
+- [x] **Graceful worker shutdown** - Added WorkerHandle with shutdown mechanism and Shutdown command
+- [x] **Dead code cleanup** - Removed unused methods from:
+  - NavigationState (push_history, go_back, go_forward)
+  - ModeState (set_input_focus, clear_buffer)
+  - SelectionState (save_selection, restore_selection, toggle_selection, clear_multi_selection, update_selection_time)
+  - TabState (push_history)
+  - PreviewRegistry (enable_handler, disable_handler, handler_names)
+  - PreviewCache (clear, stats)
+  - EntryState (clear, set_all_entries, set_visible_entries, set_parent_entries)
+  - Config (create_default)
+  - UIState fields (dragging_divider, last_screen_size)
+- [x] **Image URI encoding** - Added path_to_file_uri() with proper percent-encoding for spaces/special chars
+- [x] **KEY_SEQUENCE_DELAY_MS constant** - Added constant for 10ms keyboard sequence delay
+
 ---
 
 ## Executive Summary

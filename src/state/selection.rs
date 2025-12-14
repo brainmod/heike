@@ -25,29 +25,4 @@ impl SelectionState {
         }
     }
 
-    pub fn save_selection(&mut self, path: PathBuf) {
-        if let Some(idx) = self.selected_index {
-            self.directory_selections.insert(path, idx);
-        }
-    }
-
-    pub fn restore_selection(&mut self, path: &PathBuf) -> Option<usize> {
-        self.directory_selections.get(path).copied()
-    }
-
-    pub fn clear_multi_selection(&mut self) {
-        self.multi_selection.clear();
-    }
-
-    pub fn toggle_selection(&mut self, path: PathBuf) {
-        if self.multi_selection.contains(&path) {
-            self.multi_selection.remove(&path);
-        } else {
-            self.multi_selection.insert(path);
-        }
-    }
-
-    pub fn update_selection_time(&mut self) {
-        self.last_selection_change = Instant::now();
-    }
 }

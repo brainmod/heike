@@ -195,16 +195,6 @@ impl Config {
         Err("Could not determine config directory".into())
     }
 
-    /// Create a default config file if it doesn't exist
-    pub fn create_default() -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(path) = Self::config_path() {
-            if !path.exists() {
-                let config = Config::default();
-                config.save()?;
-            }
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
