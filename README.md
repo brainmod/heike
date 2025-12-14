@@ -90,6 +90,15 @@
 * **File Management:**
   * `d`: Delete with confirmation prompt
   * `r`: Rename with inline modal
+  * `Shift+R`: Bulk rename (vidir-style multi-file editing)
+  * `e`: Open file with system default application
+* **Bookmarks:**
+  * `g` + key: Jump to bookmark (h=home, d=Downloads, r=root, etc.)
+  * Configurable via `~/.config/heike/config.toml`
+* **Sorting:**
+  * `Shift+O`: Cycle sort by (Name/Size/Modified/Extension)
+  * `Alt+O`: Toggle sort order (Ascending/Descending)
+  * `Ctrl+O`: Toggle directories-first sorting
 * **Visual Multi-Select:** Select multiple files for batch operations
 * **Feedback System:** Info and error message toasts in bottom bar
 
@@ -176,19 +185,19 @@
 * [ ] Video thumbnail generation
 * [ ] PDF page rendering (currently text-only)
 * [ ] HTML preview with rendering
-* [ ] Office document preview (DOCX, XLSX, PPTX)
+* [x] Office document preview (DOCX, XLSX)
 
 ### **Hotkey & Keybinding Extensions**
 * [ ] Configurable keybindings
 * [ ] Macro recording and playback
 * [ ] Custom command aliases
-* [ ] Bookmark system (jump to favorite directories)
+* [x] Bookmark system (g + key, configurable in config.toml)
 * [ ] Quick navigation marks
 
 ### **Advanced Features**
-* [ ] Multiple workspace tabs
+* [x] Multiple workspace tabs (Ctrl+T/W, Alt+1-9)
 * [ ] Split panes for side-by-side file management
-* [ ] Bulk rename operations
+* [x] Bulk rename operations (Shift+R)
 * [x] File search across directories (content search with Shift+S)
 * [ ] Plugin system (Lua or Wasm)
 * [ ] Embedded terminal pane

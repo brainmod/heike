@@ -30,6 +30,7 @@ pub const MODAL_HEIGHT_RATIO: f32 = 0.8;
 // --- Timing ---
 pub const PREVIEW_DEBOUNCE_MS: u64 = 200;
 pub const DOUBLE_PRESS_MS: u64 = 500;
+pub const KEY_SEQUENCE_DELAY_MS: u64 = 10; // Delay between keys in sequences like 'g' + key
 pub const MESSAGE_TIMEOUT_SECS: u64 = 5;
 
 // --- Preview limits ---

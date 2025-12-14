@@ -2,7 +2,6 @@
 use crate::style::Theme;
 use crate::state::{SortOptions, SearchOptions};
 use std::time::Instant;
-use eframe::egui;
 
 pub struct UIState {
     pub show_hidden: bool,
@@ -11,8 +10,6 @@ pub struct UIState {
     pub error_message: Option<(String, Instant)>,
     pub info_message: Option<(String, Instant)>,
     pub panel_widths: [f32; 2],
-    pub dragging_divider: Option<usize>,
-    pub last_screen_size: egui::Vec2,
     pub is_loading: bool,
     pub search_query: String,
     pub search_options: SearchOptions,
@@ -32,8 +29,6 @@ impl UIState {
             error_message: None,
             info_message: None,
             panel_widths: [200.0, 350.0],
-            dragging_divider: None,
-            last_screen_size: egui::Vec2::ZERO,
             is_loading: false,
             search_query: String::new(),
             search_options: SearchOptions::default(),

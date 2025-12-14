@@ -80,15 +80,6 @@ impl PreviewCache {
         );
     }
 
-    /// Clear cache
-    pub fn clear(&mut self) {
-        self.cache.clear();
-    }
-
-    /// Get cache statistics
-    pub fn stats(&self) -> (usize, usize) {
-        (self.cache.len(), self.max_entries)
-    }
 }
 
 impl Default for PreviewCache {

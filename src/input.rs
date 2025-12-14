@@ -5,6 +5,7 @@ use crate::app::Heike;
 use crate::state::ClipboardOp;
 use crate::io::worker::IoCommand;
 use crate::state::AppMode;
+use crate::style;
 use eframe::egui;
 use std::fs;
 use std::time::{Duration, Instant};
@@ -358,7 +359,7 @@ impl Heike {
         // 5. File Operation Triggers (Phase 6)
         // Check if we're waiting for a bookmark key - if so, skip file operations
         let waiting_for_bookmark = if let Some(last) = self.selection.last_g_press {
-            Instant::now().duration_since(last) < Duration::from_millis(500)
+            Instant::now().duration_since(last) < Duration::from_millis(style::DOUBLE_PRESS_MS)
         } else {
             false
         };
@@ -503,7 +504,7 @@ impl Heike {
         if ctx.input(|i| i.key_pressed(egui::Key::G) && !i.modifiers.shift) {
             let now = Instant::now();
             if let Some(last) = self.selection.last_g_press {
-                if now.duration_since(last) < Duration::from_millis(500) {
+                if now.duration_since(last) < Duration::from_millis(style::DOUBLE_PRESS_MS) {
                     // Double 'g' press - jump to top
                     new_index = 0;
                     self.selection.last_g_press = None;
@@ -521,10 +522,10 @@ impl Heike {
         // Check for bookmark navigation (g + key)
         if let Some(last) = self.selection.last_g_press {
             let elapsed = Instant::now().duration_since(last);
-            if elapsed > Duration::from_millis(500) {
+            if elapsed > Duration::from_millis(style::DOUBLE_PRESS_MS) {
                 // Timeout - clear the 'g' press
                 self.selection.last_g_press = None;
-            } else if elapsed > Duration::from_millis(10) {
+            } else if elapsed > Duration::from_millis(style::KEY_SEQUENCE_DELAY_MS) {
                 // Short delay to allow keyboard input processing
                 // Check for any single-character key press for bookmarks
                 let bookmark_key = ctx.input(|i| {

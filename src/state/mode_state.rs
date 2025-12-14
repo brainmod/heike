@@ -20,12 +20,4 @@ impl ModeState {
         self.mode = mode;
     }
 
-    pub fn set_input_focus(&mut self, focus: bool) {
-        self.focus_input = focus;
-    }
-
-    pub fn clear_buffer(&mut self) {
-        self.command_buffer.clear();
-        self.focus_input = false;
-    }
 }

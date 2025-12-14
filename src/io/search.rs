@@ -8,7 +8,7 @@ use ignore::WalkBuilder;
 use lopdf::Document as PdfDocument;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 use zip::ZipArchive;
 
 use super::worker::IoResult;
@@ -18,6 +18,8 @@ struct SearchSink {
     file_path: PathBuf,
     file_name: String,
     max_results: usize,
+    query: String,
+    case_sensitive: bool,
 }
 
 impl Sink for SearchSink {
@@ -30,18 +32,31 @@ impl Sink for SearchSink {
 
         let line_number = mat.line_number().unwrap_or(0) as usize;
         let line_content = String::from_utf8_lossy(mat.bytes()).to_string();
+        let trimmed_content = line_content.trim_end().to_string();
 
-        let (match_start, match_end) = if mat.bytes().iter().position(|_| true).is_some() {
-            (0, line_content.len().min(100))
+        // Find actual match position within the line
+        let (match_start, match_end) = if self.case_sensitive {
+            if let Some(pos) = trimmed_content.find(&self.query) {
+                (pos, pos + self.query.len())
+            } else {
+                (0, trimmed_content.len().min(100))
+            }
         } else {
-            (0, 0)
+            // Case-insensitive search
+            let lower_content = trimmed_content.to_lowercase();
+            let lower_query = self.query.to_lowercase();
+            if let Some(pos) = lower_content.find(&lower_query) {
+                (pos, pos + self.query.len())
+            } else {
+                (0, trimmed_content.len().min(100))
+            }
         };
 
         self.results.push(SearchResult {
             file_path: self.file_path.clone(),
             file_name: self.file_name.clone(),
             line_number,
-            line_content: line_content.trim_end().to_string(),
+            line_content: trimmed_content,
             match_start,
             match_end,
         });
@@ -54,6 +69,8 @@ fn search_text_file(
     path: &Path,
     matcher: &impl Matcher,
     max_results: usize,
+    query: &str,
+    case_sensitive: bool,
 ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error>> {
     let mut sink = SearchSink {
         results: Vec::new(),
@@ -64,6 +81,8 @@ fn search_text_file(
             .to_string_lossy()
             .to_string(),
         max_results,
+        query: query.to_string(),
+        case_sensitive,
     };
 
     let mut searcher = Searcher::new();
@@ -303,7 +322,7 @@ pub fn perform_search(
     query: &str,
     root: &Path,
     options: &SearchOptions,
-    progress_tx: &Sender<IoResult>,
+    progress_tx: &SyncSender<IoResult>,
 ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error>> {
     let mut all_results = Vec::new();
     let mut files_searched = 0;
@@ -370,7 +389,13 @@ pub fn perform_search(
             "docx" | "doc" => search_docx_content(path, query, options.case_sensitive),
             "xlsx" | "xls" => search_xlsx_content(path, query, options.case_sensitive),
             _ => {
-                match search_text_file(path, &matcher, options.max_results - all_results.len()) {
+                match search_text_file(
+                    path,
+                    &matcher,
+                    options.max_results - all_results.len(),
+                    query,
+                    options.case_sensitive,
+                ) {
                     Ok(results) => results,
                     Err(_) => {
                         errors += 1;

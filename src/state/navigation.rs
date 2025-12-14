@@ -18,31 +18,4 @@ impl NavigationState {
         }
     }
 
-    pub fn push_history(&mut self, path: PathBuf) {
-        // Remove any forward history when navigating to a new path
-        self.history.truncate(self.history_index + 1);
-        self.history.push(path.clone());
-        self.history_index += 1;
-        self.current_path = path;
-    }
-
-    pub fn go_back(&mut self) -> Option<PathBuf> {
-        if self.history_index > 0 {
-            self.history_index -= 1;
-            self.current_path = self.history[self.history_index].clone();
-            Some(self.current_path.clone())
-        } else {
-            None
-        }
-    }
-
-    pub fn go_forward(&mut self) -> Option<PathBuf> {
-        if self.history_index < self.history.len() - 1 {
-            self.history_index += 1;
-            self.current_path = self.history[self.history_index].clone();
-            Some(self.current_path.clone())
-        } else {
-            None
-        }
-    }
 }
