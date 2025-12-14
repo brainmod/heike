@@ -16,6 +16,10 @@ impl TextPreviewHandler {
         Self
     }
 
+    /// Maximum number of lines to syntax-highlight for performance
+    /// Files with more lines will be truncated in preview
+    const MAX_HIGHLIGHTED_LINES: usize = 1000;
+
     const TEXT_EXTENSIONS: &'static [&'static str] = &[
         "rs", "py", "js", "ts", "jsx", "tsx", "c", "cpp", "h", "hpp", "java", "go", "rb", "php",
         "swift", "kt", "scala", "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd", "html", "css",
@@ -95,6 +99,24 @@ impl PreviewHandler for TextPreviewHandler {
         };
         let theme = &context.theme_set.themes[theme_name];
 
+        // Count total lines and check if we need to truncate
+        let all_lines: Vec<&str> = content.lines().collect();
+        let total_lines = all_lines.len();
+        let is_truncated = total_lines > Self::MAX_HIGHLIGHTED_LINES;
+
+        // Show truncation warning if needed
+        if is_truncated {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("⚠").color(egui::Color32::YELLOW));
+                ui.label(egui::RichText::new(format!(
+                    "Large file: showing first {} of {} lines for performance",
+                    Self::MAX_HIGHLIGHTED_LINES,
+                    total_lines
+                )).italics());
+            });
+            ui.separator();
+        }
+
         egui::ScrollArea::vertical()
             .id_salt("preview_code")
             .auto_shrink([false, false])
@@ -105,7 +127,14 @@ impl PreviewHandler for TextPreviewHandler {
 
                 let mut job = egui::text::LayoutJob::default();
 
-                for line in LinesWithEndings::from(content.as_ref()) {
+                // Only highlight up to MAX_HIGHLIGHTED_LINES
+                let lines_to_highlight = if is_truncated {
+                    Self::MAX_HIGHLIGHTED_LINES
+                } else {
+                    total_lines
+                };
+
+                for line in LinesWithEndings::from(content.as_ref()).take(lines_to_highlight) {
                     let ranges = highlighter
                         .highlight_line(line, context.syntax_set)
                         .unwrap_or_default();
