@@ -21,14 +21,101 @@ impl TextPreviewHandler {
     const MAX_HIGHLIGHTED_LINES: usize = 1000;
 
     const TEXT_EXTENSIONS: &'static [&'static str] = &[
-        "rs", "py", "js", "ts", "jsx", "tsx", "c", "cpp", "h", "hpp", "java", "go", "rb", "php",
-        "swift", "kt", "scala", "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd", "html", "css",
-        "scss", "sass", "less", "xml", "yaml", "yml", "toml", "json", "ini", "cfg", "txt", "log",
-        "conf", "config", "env", "gitignore", "dockerignore", "editorconfig", "sql", "r", "lua",
-        "vim", "el", "clj", "ex", "exs", "erl", "hrl", "hs", "ml", "fs", "cs", "vb", "pl", "pm",
-        "t", "asm", "s", "d", "diff", "patch", "mak", "makefile", "cmake", "gradle", "properties",
-        "prefs", "plist", "nix", "lisp", "scm", "rkt", "proto", "thrift", "graphql", "gql", "vue",
-        "svelte", "astro", "dart", "nim", "zig", "v", "vala", "cr", "rst", "adoc", "tex", "bib",
+        "rs",
+        "py",
+        "js",
+        "ts",
+        "jsx",
+        "tsx",
+        "c",
+        "cpp",
+        "h",
+        "hpp",
+        "java",
+        "go",
+        "rb",
+        "php",
+        "swift",
+        "kt",
+        "scala",
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "ps1",
+        "bat",
+        "cmd",
+        "html",
+        "css",
+        "scss",
+        "sass",
+        "less",
+        "xml",
+        "yaml",
+        "yml",
+        "toml",
+        "json",
+        "ini",
+        "cfg",
+        "txt",
+        "log",
+        "conf",
+        "config",
+        "env",
+        "gitignore",
+        "dockerignore",
+        "editorconfig",
+        "sql",
+        "r",
+        "lua",
+        "vim",
+        "el",
+        "clj",
+        "ex",
+        "exs",
+        "erl",
+        "hrl",
+        "hs",
+        "ml",
+        "fs",
+        "cs",
+        "vb",
+        "pl",
+        "pm",
+        "t",
+        "asm",
+        "s",
+        "d",
+        "diff",
+        "patch",
+        "mak",
+        "makefile",
+        "cmake",
+        "gradle",
+        "properties",
+        "prefs",
+        "plist",
+        "nix",
+        "lisp",
+        "scm",
+        "rkt",
+        "proto",
+        "thrift",
+        "graphql",
+        "gql",
+        "vue",
+        "svelte",
+        "astro",
+        "dart",
+        "nim",
+        "zig",
+        "v",
+        "vala",
+        "cr",
+        "rst",
+        "adoc",
+        "tex",
+        "bib",
         "lock",
     ];
 
@@ -86,10 +173,11 @@ impl PreviewHandler for TextPreviewHandler {
             let content = String::from_utf8_lossy(&data).to_string();
 
             // Store in cache for future use
-            context
-                .preview_cache
-                .borrow_mut()
-                .insert(entry.path.clone(), content.clone(), entry.modified);
+            context.preview_cache.borrow_mut().insert(
+                entry.path.clone(),
+                content.clone(),
+                entry.modified,
+            );
 
             content
         };
@@ -116,11 +204,14 @@ impl PreviewHandler for TextPreviewHandler {
         if is_truncated {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("⚠").color(egui::Color32::YELLOW));
-                ui.label(egui::RichText::new(format!(
-                    "Large file: showing first {} of {} lines for performance",
-                    Self::MAX_HIGHLIGHTED_LINES,
-                    total_lines
-                )).italics());
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Large file: showing first {} of {} lines for performance",
+                        Self::MAX_HIGHLIGHTED_LINES,
+                        total_lines
+                    ))
+                    .italics(),
+                );
             });
             ui.separator();
         }

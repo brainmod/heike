@@ -39,6 +39,9 @@ pub struct FontConfig {
     pub font_size: f32,
     /// Size of icons (in points)
     pub icon_size: f32,
+    /// Path to a custom TTF font file
+    #[serde(default)]
+    pub custom_font_path: Option<String>,
 }
 
 /// UI behavior configuration
@@ -92,7 +95,9 @@ impl BookmarksConfig {
     pub fn resolve_path(&self, key: &str) -> Option<PathBuf> {
         self.shortcuts.get(key).map(|path_str| {
             if path_str.starts_with('~') {
-                if let Some(home_dir) = directories::UserDirs::new().map(|ud| ud.home_dir().to_path_buf()) {
+                if let Some(home_dir) =
+                    directories::UserDirs::new().map(|ud| ud.home_dir().to_path_buf())
+                {
                     let rest = &path_str[1..];
                     home_dir.join(rest)
                 } else {
@@ -131,6 +136,7 @@ impl Default for Config {
             font: FontConfig {
                 font_size: 12.0,
                 icon_size: 14.0,
+                custom_font_path: None,
             },
             ui: UiConfig {
                 show_hidden: false,
@@ -160,15 +166,13 @@ impl Config {
         if let Some(path) = Self::config_path() {
             if path.exists() {
                 match fs::read_to_string(&path) {
-                    Ok(contents) => {
-                        match toml::from_str::<Config>(&contents) {
-                            Ok(config) => return config,
-                            Err(e) => {
-                                eprintln!("Failed to parse config file: {}", e);
-                                eprintln!("Using default configuration");
-                            }
+                    Ok(contents) => match toml::from_str::<Config>(&contents) {
+                        Ok(config) => return config,
+                        Err(e) => {
+                            eprintln!("Failed to parse config file: {}", e);
+                            eprintln!("Using default configuration");
                         }
-                    }
+                    },
                     Err(e) => {
                         eprintln!("Failed to read config file: {}", e);
                         eprintln!("Using default configuration");
@@ -194,7 +198,6 @@ impl Config {
 
         Err("Could not determine config directory".into())
     }
-
 }
 
 #[cfg(test)]
@@ -209,6 +212,7 @@ mod tests {
         assert_eq!(config.panel.preview_width, 350.0);
         assert_eq!(config.font.font_size, 12.0);
         assert_eq!(config.font.icon_size, 14.0);
+        assert!(config.font.custom_font_path.is_none());
     }
 
     #[test]

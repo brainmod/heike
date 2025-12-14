@@ -14,7 +14,11 @@ use std::path::PathBuf;
 
 fn main() -> eframe::Result<()> {
     // Parse CLI arguments for starting directory
-    let start_dir = std::env::args().nth(1).map(PathBuf::from);
+    let start_dir = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .and_then(|p| p.canonicalize().ok());
+
     // Load the app icon
     let icon_bytes = include_bytes!("../assets/heike_icon.png");
     let icon_image = image::load_from_memory(icon_bytes)
@@ -54,7 +58,28 @@ fn main() -> eframe::Result<()> {
                 egui::FontData::from_static(nerd_font_data).into(),
             );
 
-            // Add to proportional and monospace families (prioritize Nerd Font)
+            // Load custom font if configured
+            let mut custom_font_loaded = false;
+            if let Some(path_str) = &config.font.custom_font_path {
+                match std::fs::read(path_str) {
+                    Ok(data) => {
+                        fonts.font_data.insert(
+                            "custom_font".to_owned(),
+                            egui::FontData::from_owned(data).into(),
+                        );
+                        custom_font_loaded = true;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to load custom font from '{}': {}", path_str, e);
+                    }
+                }
+            }
+
+            // Priority:
+            // 1. Custom Font (if loaded) - for text
+            // 2. Nerd Font - for icons (and fallback text)
+            // 3. Default fonts
+
             fonts
                 .families
                 .entry(egui::FontFamily::Proportional)
@@ -67,10 +92,23 @@ fn main() -> eframe::Result<()> {
                 .or_default()
                 .insert(0, "nerd_font".to_owned());
 
+            if custom_font_loaded {
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
+                    .or_default()
+                    .insert(0, "custom_font".to_owned());
+
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(0, "custom_font".to_owned());
+            }
+
             cc.egui_ctx.set_fonts(fonts);
 
             Ok(Box::new(Heike::new(cc.egui_ctx.clone(), config, start_dir)))
         }),
     )
 }
-

@@ -79,7 +79,6 @@ impl PreviewCache {
             },
         );
     }
-
 }
 
 impl Default for PreviewCache {

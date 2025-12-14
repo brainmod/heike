@@ -19,5 +19,4 @@ impl ModeState {
     pub fn set_mode(&mut self, mode: AppMode) {
         self.mode = mode;
     }
-
 }

@@ -16,6 +16,6 @@ pub use mode_state::ModeState;
 pub use navigation::NavigationState;
 pub use search::{SearchOptions, SearchResult};
 pub use selection::SelectionState;
-pub use sort::{SortBy, SortOrder, SortOptions};
+pub use sort::{SortBy, SortOptions, SortOrder};
 pub use tabs::TabsManager;
 pub use ui::UIState;

@@ -17,5 +17,4 @@ impl NavigationState {
             pending_selection_path: None,
         }
     }
-
 }

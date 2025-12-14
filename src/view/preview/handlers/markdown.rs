@@ -61,10 +61,11 @@ impl PreviewHandler for MarkdownPreviewHandler {
                 .map_err(|e| format!("Failed to read file: {}", e))?;
 
             // Store in cache for future use
-            context
-                .preview_cache
-                .borrow_mut()
-                .insert(entry.path.clone(), content.clone(), entry.modified);
+            context.preview_cache.borrow_mut().insert(
+                entry.path.clone(),
+                content.clone(),
+                entry.modified,
+            );
 
             content
         };

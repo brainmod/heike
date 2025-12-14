@@ -1,6 +1,6 @@
 // UI state - presentation and layout settings
+use crate::state::{SearchOptions, SortOptions};
 use crate::style::Theme;
-use crate::state::{SortOptions, SearchOptions};
 use std::time::Instant;
 
 pub struct UIState {

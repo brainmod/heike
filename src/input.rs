@@ -2,9 +2,9 @@
 // Keyboard and mouse input processing
 
 use crate::app::Heike;
-use crate::state::ClipboardOp;
 use crate::io::worker::IoCommand;
 use crate::state::AppMode;
+use crate::state::ClipboardOp;
 use crate::style;
 use eframe::egui;
 use std::fs;
@@ -17,7 +17,10 @@ impl Heike {
 
         for file in dropped_files {
             if let Some(path) = &file.path {
-                let dest = self.navigation.current_path.join(path.file_name().unwrap_or_default());
+                let dest = self
+                    .navigation
+                    .current_path
+                    .join(path.file_name().unwrap_or_default());
 
                 // Copy the dropped file to current directory
                 if path.is_dir() {
@@ -331,7 +334,8 @@ impl Heike {
         if ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.ctrl) {
             // Ctrl+R: Invert selection (select unselected, deselect selected)
             let unselected: Vec<_> = self
-                .entries.visible_entries
+                .entries
+                .visible_entries
                 .iter()
                 .filter(|e| !self.selection.multi_selection.contains(&e.path))
                 .map(|e| e.path.clone())
@@ -373,14 +377,17 @@ impl Heike {
         if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::P)) {
             self.paste_clipboard();
         }
-        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::D) && !i.modifiers.ctrl)
+        {
             self.mode.set_mode(AppMode::DeleteConfirm);
         }
-        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.shift) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R) && i.modifiers.shift)
+        {
             // Shift+R: Bulk rename - rename multiple files at once
             self.enter_bulk_rename_mode();
         }
-        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R) && !i.modifiers.shift) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::R) && !i.modifiers.shift)
+        {
             if let Some(idx) = self.selection.selected_index {
                 if let Some(entry) = self.entries.visible_entries.get(idx) {
                     self.mode.command_buffer = entry.name.clone();
@@ -404,13 +411,19 @@ impl Heike {
                 }
             }
         }
-        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::E) && i.modifiers.shift) {
+        if !waiting_for_bookmark && ctx.input(|i| i.key_pressed(egui::Key::E) && i.modifiers.shift)
+        {
             // Shift+E: open command mode for extraction (user can use ':' commands)
             // For now, just show a message since extraction requires special handling
             if let Some(idx) = self.selection.selected_index {
                 if let Some(entry) = self.entries.visible_entries.get(idx) {
-                    if matches!(entry.extension.as_str(), "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz") {
-                        self.ui.set_info("Use ':extract <path>' command to extract this archive".into());
+                    if matches!(
+                        entry.extension.as_str(),
+                        "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz"
+                    ) {
+                        self.ui.set_info(
+                            "Use ':extract <path>' command to extract this archive".into(),
+                        );
                     } else {
                         self.ui.set_error("Selected file is not an archive".into());
                     }
@@ -447,7 +460,7 @@ impl Heike {
             i.key_pressed(egui::Key::Backspace)
                 || i.key_pressed(egui::Key::H)
                 || i.key_pressed(egui::Key::ArrowLeft)
-                || i.key_pressed(egui::Key::Minus)  // '-' for parent (vim standard)
+                || i.key_pressed(egui::Key::Minus) // '-' for parent (vim standard)
         }) {
             self.navigate_up();
         }
@@ -480,7 +493,11 @@ impl Heike {
         if ctx.input(|i| i.key_pressed(egui::Key::U) && i.modifiers.ctrl) {
             // Ctrl-U: half-page up
             let page_size = (self.entries.visible_entries.len() / 2).max(1);
-            new_index = if current >= page_size { current - page_size } else { 0 };
+            new_index = if current >= page_size {
+                current - page_size
+            } else {
+                0
+            };
             changed = true;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::F) && i.modifiers.ctrl) {
@@ -492,7 +509,11 @@ impl Heike {
         if ctx.input(|i| i.key_pressed(egui::Key::B) && i.modifiers.ctrl) {
             // Ctrl-B: full page up
             let page_size = self.entries.visible_entries.len().max(1);
-            new_index = if current >= page_size { current - page_size } else { 0 };
+            new_index = if current >= page_size {
+                current - page_size
+            } else {
+                0
+            };
             changed = true;
         }
 
@@ -530,12 +551,41 @@ impl Heike {
                 // Check for any single-character key press for bookmarks
                 let bookmark_key = ctx.input(|i| {
                     for key in &[
-                        egui::Key::A, egui::Key::B, egui::Key::C, egui::Key::D, egui::Key::E, egui::Key::F,
-                        egui::Key::H, egui::Key::I, egui::Key::J, egui::Key::K, egui::Key::L, egui::Key::M,
-                        egui::Key::N, egui::Key::O, egui::Key::P, egui::Key::Q, egui::Key::R, egui::Key::S,
-                        egui::Key::T, egui::Key::U, egui::Key::V, egui::Key::W, egui::Key::X, egui::Key::Y, egui::Key::Z,
-                        egui::Key::Num0, egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4,
-                        egui::Key::Num5, egui::Key::Num6, egui::Key::Num7, egui::Key::Num8, egui::Key::Num9,
+                        egui::Key::A,
+                        egui::Key::B,
+                        egui::Key::C,
+                        egui::Key::D,
+                        egui::Key::E,
+                        egui::Key::F,
+                        egui::Key::H,
+                        egui::Key::I,
+                        egui::Key::J,
+                        egui::Key::K,
+                        egui::Key::L,
+                        egui::Key::M,
+                        egui::Key::N,
+                        egui::Key::O,
+                        egui::Key::P,
+                        egui::Key::Q,
+                        egui::Key::R,
+                        egui::Key::S,
+                        egui::Key::T,
+                        egui::Key::U,
+                        egui::Key::V,
+                        egui::Key::W,
+                        egui::Key::X,
+                        egui::Key::Y,
+                        egui::Key::Z,
+                        egui::Key::Num0,
+                        egui::Key::Num1,
+                        egui::Key::Num2,
+                        egui::Key::Num3,
+                        egui::Key::Num4,
+                        egui::Key::Num5,
+                        egui::Key::Num6,
+                        egui::Key::Num7,
+                        egui::Key::Num8,
+                        egui::Key::Num9,
                     ] {
                         if i.key_pressed(*key) {
                             return Some(key.name().to_lowercase());
@@ -549,7 +599,10 @@ impl Heike {
                         if path.is_dir() {
                             self.navigate_to(path);
                         } else {
-                            self.ui.set_error(format!("Bookmark '{}' does not exist or is not a directory", key));
+                            self.ui.set_error(format!(
+                                "Bookmark '{}' does not exist or is not a directory",
+                                key
+                            ));
                         }
                     } else {
                         self.ui.set_info(format!("No bookmark '{}' defined", key));
