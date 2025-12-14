@@ -16,42 +16,15 @@ impl ArchivePreviewHandler {
     }
 
     const MAX_PREVIEW_ITEMS: usize = 100;
+    const ARCHIVE_SIZE_LIMIT: u64 = 100 * 1024 * 1024; // 100MB
 
     fn is_archive_extension(ext: &str) -> bool {
         matches!(ext, "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz")
     }
-}
 
-impl PreviewHandler for ArchivePreviewHandler {
-    fn name(&self) -> &str {
-        "archive"
-    }
-
-    fn can_preview(&self, entry: &FileEntry) -> bool {
-        Self::is_archive_extension(&entry.extension)
-    }
-
-    fn render(
-        &self,
-        ui: &mut egui::Ui,
-        entry: &FileEntry,
-        _context: &PreviewContext,
-    ) -> Result<(), String> {
-        // File size check - archives over 100MB may be slow to parse
-        const ARCHIVE_SIZE_LIMIT: u64 = 100 * 1024 * 1024; // 100MB for archives
-        if entry.size > ARCHIVE_SIZE_LIMIT {
-            ui.centered_and_justified(|ui| {
-                ui.label(format!(
-                    "Archive too large for preview ({} > {})",
-                    bytesize::ByteSize(entry.size),
-                    bytesize::ByteSize(ARCHIVE_SIZE_LIMIT)
-                ));
-            });
-            return Ok(());
-        }
-
-        // For zip files, we can get the exact total count cheaply (already indexed)
-        // For tar files, getting the total requires full iteration, so we indicate if truncated
+    /// Extract archive contents as a cacheable string
+    /// Format: "total:<N>|+" on first line, then "D|F\tname\tsize" per item
+    fn extract_contents(entry: &FileEntry) -> Result<String, String> {
         let result = if entry.extension == "zip" {
             fs::File::open(&entry.path).ok().and_then(|file| {
                 ZipArchive::new(file).ok().map(|mut archive| {
@@ -62,7 +35,7 @@ impl PreviewHandler for ArchivePreviewHandler {
                             items.push((file.name().to_string(), file.size(), file.is_dir()));
                         }
                     }
-                    (items, Some(total)) // ZIP: we know exact total
+                    (items, Some(total))
                 })
             })
         } else if entry.extension == "tar" || entry.extension == "gz" || entry.extension == "tgz" {
@@ -75,11 +48,9 @@ impl PreviewHandler for ArchivePreviewHandler {
                     };
 
                 Archive::new(reader).entries().ok().map(|entries| {
-                    // Lazily iterate only up to MAX_PREVIEW_ITEMS
-                    // We don't know the total count without full iteration
                     let items: Vec<_> = entries
                         .filter_map(|e| e.ok())
-                        .take(Self::MAX_PREVIEW_ITEMS + 1) // Take one extra to detect if there are more
+                        .take(Self::MAX_PREVIEW_ITEMS + 1)
                         .map(|e| {
                             let size = e.header().size().unwrap_or(0);
                             let path = e
@@ -100,7 +71,6 @@ impl PreviewHandler for ArchivePreviewHandler {
                         items
                     };
 
-                    // TAR: None indicates unknown total (lazy mode)
                     (items_to_show, if has_more { None } else { Some(shown_count) })
                 })
             })
@@ -110,6 +80,104 @@ impl PreviewHandler for ArchivePreviewHandler {
 
         match result {
             Some((items, total)) => {
+                let mut lines = Vec::with_capacity(items.len() + 1);
+                // First line: total count
+                match total {
+                    Some(t) => lines.push(format!("total:{}", t)),
+                    None => lines.push(format!("total:{}+", items.len())),
+                }
+                // Subsequent lines: type\tname\tsize
+                for (name, size, is_dir) in items {
+                    let type_char = if is_dir { 'D' } else { 'F' };
+                    lines.push(format!("{}\t{}\t{}", type_char, name, size));
+                }
+                Ok(lines.join("\n"))
+            }
+            None => Err("Failed to read archive".to_string()),
+        }
+    }
+
+    /// Parse cached content back into items and total
+    fn parse_cached(content: &str) -> Option<(Vec<(String, u64, bool)>, Option<usize>)> {
+        let mut lines = content.lines();
+        let first_line = lines.next()?;
+
+        let total = if let Some(rest) = first_line.strip_prefix("total:") {
+            if rest.ends_with('+') {
+                None // Unknown total
+            } else {
+                rest.parse().ok()
+            }
+        } else {
+            return None;
+        };
+
+        let items: Vec<_> = lines
+            .filter_map(|line| {
+                let mut parts = line.splitn(3, '\t');
+                let type_char = parts.next()?;
+                let name = parts.next()?.to_string();
+                let size: u64 = parts.next()?.parse().ok()?;
+                let is_dir = type_char == "D";
+                Some((name, size, is_dir))
+            })
+            .collect();
+
+        Some((items, total))
+    }
+}
+
+impl PreviewHandler for ArchivePreviewHandler {
+    fn name(&self) -> &str {
+        "archive"
+    }
+
+    fn can_preview(&self, entry: &FileEntry) -> bool {
+        Self::is_archive_extension(&entry.extension)
+    }
+
+    fn render(
+        &self,
+        ui: &mut egui::Ui,
+        entry: &FileEntry,
+        context: &PreviewContext,
+    ) -> Result<(), String> {
+        // File size check
+        if entry.size > Self::ARCHIVE_SIZE_LIMIT {
+            ui.centered_and_justified(|ui| {
+                ui.label(format!(
+                    "Archive too large for preview ({} > {})",
+                    bytesize::ByteSize(entry.size),
+                    bytesize::ByteSize(Self::ARCHIVE_SIZE_LIMIT)
+                ));
+            });
+            return Ok(());
+        }
+
+        // Try to get cached content
+        let cached_content = {
+            let cache = context.preview_cache.borrow();
+            cache.get(&entry.path, entry.modified)
+        };
+
+        let parsed = if let Some(cached) = cached_content {
+            Self::parse_cached(&cached)
+        } else {
+            let result = Self::extract_contents(entry);
+            match result {
+                Ok(ref content) => {
+                    context
+                        .preview_cache
+                        .borrow_mut()
+                        .insert(entry.path.clone(), content.clone(), entry.modified);
+                    Self::parse_cached(content)
+                }
+                Err(e) => return Err(e),
+            }
+        };
+
+        match parsed {
+            Some((items, total)) => {
                 if items.is_empty() {
                     ui.centered_and_justified(|ui| {
                         ui.label("Empty archive");
@@ -117,7 +185,6 @@ impl PreviewHandler for ArchivePreviewHandler {
                     return Ok(());
                 }
 
-                // Format the count message based on whether we know the exact total
                 let count_msg = match total {
                     Some(t) => {
                         if t > Self::MAX_PREVIEW_ITEMS {
@@ -127,7 +194,6 @@ impl PreviewHandler for ArchivePreviewHandler {
                         }
                     }
                     None => {
-                        // Unknown total (lazy tar iteration)
                         format!("Archive contains {}+ items (lazy preview)", items.len())
                     }
                 };
@@ -169,7 +235,7 @@ impl PreviewHandler for ArchivePreviewHandler {
                     });
                 Ok(())
             }
-            None => Err("Failed to read archive".to_string()),
+            None => Err("Failed to parse archive data".to_string()),
         }
     }
 

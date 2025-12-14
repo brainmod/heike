@@ -15,15 +15,9 @@ impl OfficePreviewHandler {
         Self
     }
 
-    fn render_docx(&self, ui: &mut egui::Ui, entry: &FileEntry) -> Result<(), String> {
-        ui.vertical_centered(|ui| {
-            ui.add_space(20.0);
-            ui.label(egui::RichText::new("📄 Word Document").size(18.0));
-            ui.add_space(10.0);
-        });
-
+    /// Extract DOCX text content for caching
+    fn extract_docx_text(entry: &FileEntry) -> Result<String, String> {
         let data = fs::read(&entry.path).map_err(|e| format!("Failed to read file: {}", e))?;
-
         let docx = read_docx(&data).map_err(|e| format!("Failed to parse DOCX: {}", e))?;
 
         let mut text_content = String::new();
@@ -41,6 +35,15 @@ impl OfficePreviewHandler {
                 text_content.push('\n');
             }
         }
+        Ok(text_content)
+    }
+
+    fn render_docx_content(&self, ui: &mut egui::Ui, text_content: &str) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(20.0);
+            ui.label(egui::RichText::new("📄 Word Document").size(18.0));
+            ui.add_space(10.0);
+        });
 
         if text_content.trim().is_empty() {
             ui.centered_and_justified(|ui| {
@@ -54,9 +57,30 @@ impl OfficePreviewHandler {
                 .show(ui, |ui| {
                     ui.set_max_width(ui.available_width());
                     ui.add_space(5.0);
-                    ui.label(egui::RichText::new(&text_content).monospace());
+                    ui.label(egui::RichText::new(text_content).monospace());
                 });
         }
+    }
+
+    fn render_docx(&self, ui: &mut egui::Ui, entry: &FileEntry, context: &PreviewContext) -> Result<(), String> {
+        // Try cache first
+        let cached_content = {
+            let cache = context.preview_cache.borrow();
+            cache.get(&entry.path, entry.modified)
+        };
+
+        let content = if let Some(cached) = cached_content {
+            cached
+        } else {
+            let text = Self::extract_docx_text(entry)?;
+            context
+                .preview_cache
+                .borrow_mut()
+                .insert(entry.path.clone(), text.clone(), entry.modified);
+            text
+        };
+
+        self.render_docx_content(ui, &content);
         Ok(())
     }
 
@@ -190,7 +214,7 @@ impl PreviewHandler for OfficePreviewHandler {
         &self,
         ui: &mut egui::Ui,
         entry: &FileEntry,
-        _context: &PreviewContext,
+        context: &PreviewContext,
     ) -> Result<(), String> {
         // File size check to prevent blocking UI on large documents
         if entry.size > style::MAX_PREVIEW_SIZE {
@@ -205,7 +229,7 @@ impl PreviewHandler for OfficePreviewHandler {
         }
 
         match entry.extension.as_str() {
-            "docx" | "doc" => self.render_docx(ui, entry),
+            "docx" | "doc" => self.render_docx(ui, entry, context),
             "xlsx" | "xls" => self.render_xlsx(ui, entry),
             _ => Err("Unsupported office document type".to_string()),
         }

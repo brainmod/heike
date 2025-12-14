@@ -43,6 +43,12 @@ The following issues from this review have been fixed:
 - [x] **Image URI encoding** - Added path_to_file_uri() with proper percent-encoding for spaces/special chars
 - [x] **KEY_SEQUENCE_DELAY_MS constant** - Added constant for 10ms keyboard sequence delay
 
+### Phase 6: Preview Caching Implementation
+- [x] **Audio handler caching** - Cache extracted ID3 metadata as formatted string
+- [x] **PDF handler caching** - Cache page count and metadata (title, author)
+- [x] **Archive handler caching** - Cache serialized item list with total count
+- [x] **Office handler caching** - Cache extracted DOCX text content (XLSX uses live rendering)
+
 ---
 
 ## Executive Summary
