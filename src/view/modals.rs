@@ -137,7 +137,7 @@ impl Heike {
                             }
                         }
                         ui.add_space(10.0);
-                        if ui.button("Close").clicked() {
+                        if ui.button("Close (Esc)").clicked() {
                             self.mode.set_mode(AppMode::Normal);
                         }
                     });

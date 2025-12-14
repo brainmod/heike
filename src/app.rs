@@ -1040,8 +1040,6 @@ impl Heike {
 
     // --- Rendering Methods ---
 
-
-    // Note: execute_command method is missing but needed for handle_input to compile
     pub(crate) fn execute_command(&mut self, _ctx: &egui::Context) {
         let parts: Vec<&str> = self.mode.command_buffer.trim().split_whitespace().collect();
         if parts.is_empty() {
