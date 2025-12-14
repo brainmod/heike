@@ -9,6 +9,105 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 impl Heike {
+    pub(crate) fn render_tab_bar(&mut self, ui: &mut egui::Ui) {
+        let tab_count = self.tabs.tab_count();
+        if tab_count == 0 {
+            return;
+        }
+
+        let mut switch_to: Option<usize> = None;
+        let mut close_tab: Option<usize> = None;
+        let mut open_new = false;
+
+        egui::ScrollArea::horizontal()
+            .id_salt("tab_bar_scroll")
+            .auto_shrink([false, false])
+            .max_height(36.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+
+                    for (index, tab) in self.tabs.tabs.iter().enumerate() {
+                        let is_active = index == self.tabs.active_tab;
+                        let label = if tab.label.is_empty() {
+                            "/"
+                        } else {
+                            tab.label.as_str()
+                        };
+
+                        ui.push_id(index, |ui| {
+                            let fill = if is_active {
+                                ui.visuals().selection.bg_fill
+                            } else {
+                                ui.visuals().widgets.noninteractive.bg_fill
+                            };
+                            let stroke_color = if is_active {
+                                ui.visuals().selection.stroke.color
+                            } else {
+                                ui.visuals().widgets.noninteractive.bg_stroke.color
+                            };
+
+                            egui::Frame::default()
+                                .fill(fill)
+                                .stroke(egui::Stroke::new(1.0, stroke_color))
+                                .corner_radius(egui::CornerRadius::same(6))
+                                .inner_margin(egui::Margin::symmetric(12, 6))
+                                .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+
+                                    let mut text = egui::RichText::new(label);
+                                    if is_active {
+                                        text = text.strong();
+                                    }
+
+                                    let response = ui.add(
+                                        egui::Label::new(text).sense(egui::Sense::click()),
+                                    );
+
+                                    if response.clicked() && !is_active {
+                                        switch_to = Some(index);
+                                    }
+
+                                    if tab_count > 1 {
+                                        if ui
+                                            .small_button("×")
+                                            .on_hover_text("Close tab")
+                                            .clicked()
+                                        {
+                                            close_tab = Some(index);
+                                        }
+                                    }
+                                });
+                        });
+                    }
+
+                    if ui
+                        .small_button("+")
+                        .on_hover_text("New tab (duplicate current directory)")
+                        .clicked()
+                    {
+                        open_new = true;
+                    }
+                });
+            });
+
+        if let Some(index) = close_tab {
+            if index == self.tabs.active_tab {
+                self.close_current_tab();
+            } else if self.tabs.close_tab(index) {
+                // No additional actions needed; active tab remains valid.
+            }
+        }
+
+        if let Some(index) = switch_to {
+            self.switch_to_tab(index);
+        }
+
+        if open_new {
+            self.new_tab(None);
+        }
+    }
+
     pub(crate) fn render_divider(&mut self, ui: &mut egui::Ui, index: usize) {
         let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
 

@@ -47,7 +47,12 @@ impl PreviewHandler for MarkdownPreviewHandler {
         }
 
         // Try to get cached content first
-        let content = if let Some(cached) = context.preview_cache.borrow().get(&entry.path, entry.modified) {
+        let cached_content = {
+            let cache = context.preview_cache.borrow();
+            cache.get(&entry.path, entry.modified)
+        };
+
+        let content = if let Some(cached) = cached_content {
             // Cache hit - use cached content
             cached
         } else {
@@ -56,7 +61,10 @@ impl PreviewHandler for MarkdownPreviewHandler {
                 .map_err(|e| format!("Failed to read file: {}", e))?;
 
             // Store in cache for future use
-            context.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), entry.modified);
+            context
+                .preview_cache
+                .borrow_mut()
+                .insert(entry.path.clone(), content.clone(), entry.modified);
 
             content
         };

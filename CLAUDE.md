@@ -4,7 +4,7 @@
 
 **Heike** is a GUI file manager built with Rust and egui, inspired by the terminal file manager Yazi. Named after the *Heikegani* (平家蟹), a Japanese crab with a shell pattern resembling a samurai face, Heike combines the speed and keyboard-centric efficiency of a TUI with rich media capabilities of a modern GUI.
 
-**Current Version:** 0.8.1 (The "Visual Polish" Update)
+**Current Version:** 0.8.2 (The "Stability & Tabs" Update)
 **Status:** Active Prototype
 **Repository:** https://github.com/brainmod/heike
 
@@ -18,15 +18,21 @@
 heike/
 ├── src/
 │   ├── main.rs             # Entry point (67 lines)
-│   ├── app.rs              # Heike struct, update loop (2178 lines)
+│   ├── app.rs              # Heike struct, update loop (~1600 lines)
 │   ├── entry.rs            # FileEntry struct (99 lines)
-│   ├── input.rs            # Keyboard handling (placeholder)
+│   ├── config.rs           # Configuration system (TOML)
+│   ├── input.rs            # Keyboard handling (extracted)
 │   ├── style.rs            # Theme, layout constants (76 lines)
 │   ├── state/
 │   │   ├── mod.rs          # State module exports
 │   │   ├── mode.rs         # AppMode enum
 │   │   ├── clipboard.rs    # ClipboardOp enum
-│   │   └── search.rs       # SearchResult, SearchOptions
+│   │   ├── search.rs       # SearchResult, SearchOptions
+│   │   ├── tabs.rs         # TabsManager, TabState
+│   │   ├── navigation.rs   # NavigationState
+│   │   ├── selection.rs    # SelectionState
+│   │   ├── entry.rs        # EntryState
+│   │   └── ui.rs           # UIState
 │   ├── io/
 │   │   ├── mod.rs          # IO module exports
 │   │   ├── directory.rs    # Directory reading (62 lines)
@@ -34,9 +40,22 @@ heike/
 │   │   └── worker.rs       # Async worker thread (78 lines)
 │   └── view/
 │       ├── mod.rs          # View module exports
-│       ├── preview.rs      # File preview rendering (799 lines)
-│       ├── panels.rs       # Panel rendering (placeholder)
-│       └── modals.rs       # Dialogs/popups (placeholder)
+│       ├── panels.rs       # Miller columns rendering (322 lines)
+│       ├── modals.rs       # Dialogs/popups (extracted)
+│       └── preview/
+│           ├── mod.rs      # Preview system core
+│           ├── handler.rs  # PreviewHandler trait
+│           ├── registry.rs # Handler registry
+│           └── handlers/   # Individual preview handlers
+│               ├── text.rs
+│               ├── markdown.rs
+│               ├── image.rs
+│               ├── directory.rs
+│               ├── archive.rs
+│               ├── pdf.rs
+│               ├── office.rs
+│               ├── audio.rs
+│               └── binary.rs
 ├── assets/
 │   ├── heike_icon.png
 │   └── JetBrainsMonoNerdFont-Regular.ttf
@@ -48,17 +67,16 @@ heike/
 └── FIXES.md                # Detailed fix recommendations
 ```
 
-### Remaining Refactor Tasks
+### Recent Refactoring Progress
 
-```
-# Still TODO:
-src/
-├── input.rs            # Extract keyboard handling from app.rs
-├── view/
-│   ├── panels.rs       # Extract Miller columns from app.rs
-│   └── modals.rs       # Extract dialogs from app.rs
-└── app.rs              # Group Heike fields into sub-structs
-```
+✅ **Completed:**
+- Split monolithic main.rs into modules
+- Extracted state structs (NavigationState, SelectionState, EntryState, UIState, ModeState)
+- Extracted TabsManager for multi-tab support
+- Extracted view/panels.rs for Miller columns rendering
+- Extracted view/modals.rs for dialogs
+- Modularized preview system with handler trait and registry
+- Created configuration system with TOML support
 
 ---
 
@@ -360,6 +378,36 @@ fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
     }
     &s[..idx]
 }
+```
+
+### 9. RefCell Borrow Patterns
+
+**ALWAYS ensure immutable borrows are dropped before mutable borrows:**
+
+```rust
+// ✅ CORRECT - Scope ensures immutable borrow is dropped
+let cached_content = {
+    let cache = context.preview_cache.borrow();
+    cache.get(&entry.path, entry.modified)
+};
+
+let content = if let Some(cached) = cached_content {
+    cached
+} else {
+    let content = fs::read_to_string(&entry.path)?;
+    context.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), entry.modified);
+    content
+};
+
+// ❌ WRONG - Immutable borrow still active during borrow_mut()
+let content = if let Some(cached) = context.preview_cache.borrow().get(&entry.path, entry.modified) {
+    cached
+} else {
+    let content = fs::read_to_string(&entry.path)?;
+    context.preview_cache.borrow_mut().insert(entry.path.clone(), content.clone(), entry.modified);
+    // PANIC: RefCell already borrowed!
+    content
+};
 ```
 
 ---
@@ -805,6 +853,7 @@ When creating pull requests:
 - [x] **UTF-8 byte boundary panic in search** — Fixed preview truncation to use char boundaries instead of byte slicing
 - [x] **Mouse scroll decoupling** — Scrolling via mouse should not recenter view on selected item; only keyboard nav/scroll should recenter (enhanced edge case fix: reset disable_autoscroll on navigation)
 - [x] **Parent directory selection** — Navigating to parent should restore previous folder as active (selected) item (implemented using pending_selection_path; also fixed selection memory fallback in apply_filter())
+- [x] **RefCell borrow panic in preview cache** — Fixed preview handlers to properly scope immutable borrows before attempting mutable borrows
 
 ## High: Layout Fixes
 
@@ -857,18 +906,23 @@ When creating pull requests:
   - [x] `Ctrl-D` / `Ctrl-U` — Half-page down/up navigation
   - [x] `Ctrl-F` / `Ctrl-B` — Full-page down/up navigation
   - [x] `Ctrl-R` — Invert selection (Yazi-compatible)
-  - [ ] Fix **Visual/selection mode** — Review yazi implementation and correct behavior
+  - [x] Fix **Visual/selection mode** — Review yazi implementation and correct behavior
     - [x] Invert selection (Ctrl+R) added
     - [x] Unset mode (V for deselection while navigating) — DONE (V toggles visual mode)
     - [x] Selection count in status bar — DONE (shows selected count with size)
     - [x] Visual distinction between cursor and selected items — DONE (yellow ▶ and ✓ prefix)
-  - [ ] Additional vim binds that make sense for file navigation
+  - [ ] Additional vim binds that make sense for file navigation (e.g., `o` to open in new tab)
 - [ ] **Bulk rename** — vidir-style multi-file rename mode
 - [x] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.) — DONE
   - [x] Default bookmarks: h=home, d=Downloads, p=Projects, t=/tmp
   - [x] Configurable via config.toml
   - [x] Path expansion for ~ (home directory)
-- [ ] **Tabs** — Multiple directory tabs with `iced_aw::Tabs` or similar
+- [x] **Tabs** — Multiple directory tabs — DONE
+  - [x] TabsManager state system
+  - [x] Tab creation, switching, closing
+  - [x] Per-tab state (path, history, selection)
+  - [x] UI tab bar rendering (custom implementation with Frame + horizontal ScrollArea)
+  - [x] Tab keyboard shortcuts (Ctrl+T new tab, Ctrl+W close, Alt+1-9 switch, Ctrl+Tab/Shift+Tab cycle)
 
 ## Medium: Error Handling
 
@@ -959,50 +1013,64 @@ When creating pull requests:
 ---
 
 *Last updated: 2025-12-14*
-*Latest session completed (performance optimizations + polish):*
+
+### Previous Session (Performance optimizations + polish):
 
   **Performance Optimizations:**
-  *- Implemented preview caching with LRU eviction (100 entries)*
-  *  - Cache validation using path + mtime*
-  *  - Integrated into TextPreviewHandler and MarkdownPreviewHandler*
-  *- Implemented virtual scrolling for code preview*
-  *  - 1000-line limit for syntax highlighting*
-  *  - Performance: ~200ms → ~20ms for large files*
-  *- Implemented parent directory caching*
-  *  - Avoids redundant disk I/O when navigating siblings*
-  *  - Cache invalidation on parent directory changes*
-  *- Enhanced search progress tracking*
-  *  - Detailed statistics: files searched, skipped, errors*
-  *  - Real-time progress display in search modal*
+  - Implemented preview caching with LRU eviction (100 entries)
+    - Cache validation using path + mtime
+    - Integrated into TextPreviewHandler and MarkdownPreviewHandler
+  - Implemented virtual scrolling for code preview
+    - 1000-line limit for syntax highlighting
+    - Performance: ~200ms → ~20ms for large files
+  - Implemented parent directory caching
+    - Avoids redundant disk I/O when navigating siblings
+    - Cache invalidation on parent directory changes
+  - Enhanced search progress tracking
+    - Detailed statistics: files searched, skipped, errors
+    - Real-time progress display in search modal
 
   **Code Quality & Polish:**
-  *- Refactored message handling for consistency*
-  *  - All code now uses UIState::set_error() and set_info() helpers*
-  *  - Centralized message expiration logic in clear_expired_messages()*
-  *  - Improves maintainability and reduces duplication*
-  *- Removed dead code and unused imports*
-  *- Reduced unnecessary cloning in context menus*
-  *- Fixed stale double-press timer issue*
-  *- Added sort options display to status bar*
-  *- Added keyboard shortcuts to UI (Help modal Close button)*
+  - Refactored message handling for consistency
+    - All code now uses UIState::set_error() and set_info() helpers
+    - Centralized message expiration logic in clear_expired_messages()
+    - Improves maintainability and reduces duplication
+  - Removed dead code and unused imports
+  - Reduced unnecessary cloning in context menus
+  - Fixed stale double-press timer issue
+  - Added sort options display to status bar
+  - Added keyboard shortcuts to UI (Help modal Close button)
 
   **Documentation:**
-  *- Updated CLAUDE.md task list with completion status*
-  *- All Medium: Performance tasks completed*
-  *- All Low: Code Quality tasks completed*
-  *- Most Medium: Error Handling tasks completed*
+  - Updated CLAUDE.md task list with completion status
+  - All Medium: Performance tasks completed
+  - All Low: Code Quality tasks completed
+  - Most Medium: Error Handling tasks completed
 
-  **Commits made: 10**
-  *- perf: implement preview caching for text and markdown files*
-  *- perf: add line limit for syntax highlighting in text preview*
-  *- perf: implement parent directory caching*
-  *- feat: implement detailed search progress tracking*
-  *- chore: remove unused imports and dead code*
-  *- fix: clear stale last_g_press timer on navigation actions*
-  *- perf: reduce cloning in context menu operations*
-  *- feat: add sort options display to status bar*
-  *- refactor: use UIState helper methods for message handling*
-  *- chore: remove outdated comment and add keyboard hint*
-  *- docs: mark completed tasks in CLAUDE.md*
+### Current Session (RefCell panic fix + tabs UI implementation):
+
+  **Bug Fixes:**
+  - Fixed RefCell borrow panic in preview cache
+    - Issue: Immutable borrow still active during borrow_mut() call
+    - Solution: Scope immutable borrow to ensure it's dropped before mutable borrow
+    - Affected files: text.rs and markdown.rs preview handlers
+    - Added RefCell borrow pattern to CLAUDE.md conventions
+
+  **New Features:**
+  - Implemented tab bar UI rendering
+    - Custom tab bar with Frame-based tab buttons
+    - Active tab highlighting with visual distinction
+    - Close buttons on individual tabs (disabled for last tab)
+    - Plus button to create new tabs
+    - Horizontal scrolling for many tabs
+    - Click to switch tabs, click × to close
+
+  **Documentation Updates:**
+  - Updated CLAUDE.md with RefCell borrow convention (#9)
+  - Updated architecture section to reflect current module structure
+  - Marked tabs feature as completed (UI now implemented)
+  - Updated version to 0.8.2 (Stability & Tabs update)
+  - Documented completed refactoring progress
+  - Updated README with 0.8.2 version history
 
 *For questions or clarifications, refer to git commit history or ask the repository maintainer.*

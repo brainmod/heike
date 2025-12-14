@@ -5,9 +5,16 @@
 
 ## **Project Status: Active Prototype**
 
-**Current Version:** 0.8.1 (The "Visual Polish" Update)
+**Current Version:** 0.8.2 (The "Stability & Tabs" Update)
 
 ### **Version History**
+
+#### v0.8.2 — Stability & Tabs (2025-12-14)
+* **Critical Bug Fix:** Fixed RefCell borrow panic in preview cache
+* **UI:** Added tab bar with close/new controls and horizontal scrolling
+* **Keyboard:** New tab shortcuts (Ctrl+T, Ctrl+W, Ctrl+Tab, Alt+1-9)
+* **Code Organization:** Extracted state structs, modularized preview handlers
+* **Documentation:** Updated CLAUDE.md with RefCell borrow pattern
 
 #### v0.8.1 — Visual Polish (2025-11-30)
 * Truncated labels with ellipsis overflow
@@ -34,6 +41,7 @@
 * **Unified Styling:** Consistent striped table appearance across all panes
 * **App Icon:** Custom Heikegani crab icon in window title bar
 * **Theme System:** Light/Dark mode toggle with visual indicator
+* **Tabbed Browsing:** Horizontal tab bar with new/close controls and per-tab state
 * **Responsive Preview:**
   * Directory contents preview in right pane
   * File content preview with syntax highlighting
@@ -58,7 +66,14 @@
   * `:`: Command mode
   * `Shift+S`: Content search
   * `Esc`: Return to normal mode
+* **Tab Management:**
+  * `Ctrl+T`: New tab in current directory
+  * `Ctrl+W`: Close current tab
+  * `Ctrl+Tab` / `Ctrl+Shift+Tab`: Switch between tabs
+  * `Alt+1` through `Alt+9`: Jump to specific tab
+  * Click tab label to switch, click × to close
 * **Mouse Support:**
+
   * Click to select
   * Double-click to open/navigate
   * Right-click context menu (Open, Copy, Cut, Paste, Rename, Delete, Properties)
