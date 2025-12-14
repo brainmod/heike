@@ -122,9 +122,11 @@ pub fn render_preview_header(ui: &mut egui::Ui, entry: &FileEntry) {
         egui::RichText::new(format!("{} {}", entry.get_icon(), entry.display_name())).heading(),
     );
     ui.add_space(5.0);
+    ui.label(format!("Type: {}", entry.get_file_type()));
     style::truncated_label(ui, format!("Size: {}", bytesize::ByteSize(entry.size)));
     let datetime: DateTime<Local> = entry.modified.into();
     ui.label(format!("Modified: {}", datetime.format("%Y-%m-%d %H:%M")));
+    ui.label(format!("Permissions: {}", entry.get_permissions_string()));
     ui.separator();
 }
 

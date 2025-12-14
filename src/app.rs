@@ -1599,10 +1599,6 @@ impl eframe::App for Heike {
                         strip.cell(|ui| self.render_divider(ui, 1));
                         strip.cell(|ui| {
                             ui.add_space(4.0);
-                            ui.vertical_centered(|ui| {
-                                ui.heading("Preview");
-                            });
-                            ui.separator();
                             self.render_preview(ui, &next_navigation, &pending_selection);
                         });
                     });
