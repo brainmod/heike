@@ -24,5 +24,4 @@ impl SelectionState {
             last_g_press: None,
         }
     }
-
 }

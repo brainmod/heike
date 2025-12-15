@@ -9,105 +9,6 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 impl Heike {
-    pub(crate) fn render_tab_bar(&mut self, ui: &mut egui::Ui) {
-        let tab_count = self.tabs.tab_count();
-        if tab_count == 0 {
-            return;
-        }
-
-        let mut switch_to: Option<usize> = None;
-        let mut close_tab: Option<usize> = None;
-        let mut open_new = false;
-
-        egui::ScrollArea::horizontal()
-            .id_salt("tab_bar_scroll")
-            .auto_shrink([false, false])
-            .max_height(36.0)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-
-                    for (index, tab) in self.tabs.tabs.iter().enumerate() {
-                        let is_active = index == self.tabs.active_tab;
-                        let label = if tab.label.is_empty() {
-                            "/"
-                        } else {
-                            tab.label.as_str()
-                        };
-
-                        ui.push_id(index, |ui| {
-                            let fill = if is_active {
-                                ui.visuals().selection.bg_fill
-                            } else {
-                                ui.visuals().widgets.noninteractive.bg_fill
-                            };
-                            let stroke_color = if is_active {
-                                ui.visuals().selection.stroke.color
-                            } else {
-                                ui.visuals().widgets.noninteractive.bg_stroke.color
-                            };
-
-                            egui::Frame::default()
-                                .fill(fill)
-                                .stroke(egui::Stroke::new(1.0, stroke_color))
-                                .corner_radius(egui::CornerRadius::same(6))
-                                .inner_margin(egui::Margin::symmetric(12, 6))
-                                .show(ui, |ui| {
-                                    ui.spacing_mut().item_spacing.x = 6.0;
-
-                                    let mut text = egui::RichText::new(label);
-                                    if is_active {
-                                        text = text.strong();
-                                    }
-
-                                    let response = ui.add(
-                                        egui::Label::new(text).sense(egui::Sense::click()),
-                                    );
-
-                                    if response.clicked() && !is_active {
-                                        switch_to = Some(index);
-                                    }
-
-                                    if tab_count > 1 {
-                                        if ui
-                                            .small_button("×")
-                                            .on_hover_text("Close tab")
-                                            .clicked()
-                                        {
-                                            close_tab = Some(index);
-                                        }
-                                    }
-                                });
-                        });
-                    }
-
-                    if ui
-                        .small_button("+")
-                        .on_hover_text("New tab (duplicate current directory)")
-                        .clicked()
-                    {
-                        open_new = true;
-                    }
-                });
-            });
-
-        if let Some(index) = close_tab {
-            if index == self.tabs.active_tab {
-                self.close_current_tab();
-            } else if self.tabs.close_tab(index) {
-                // No additional actions needed; active tab remains valid.
-            }
-        }
-
-        if let Some(index) = switch_to {
-            self.switch_to_tab(index);
-        }
-
-        if open_new {
-            self.new_tab(None);
-        }
-    }
-
     pub(crate) fn render_divider(&mut self, ui: &mut egui::Ui, index: usize) {
         let response = ui.allocate_response(ui.available_size(), egui::Sense::drag());
 
@@ -126,8 +27,8 @@ impl Heike {
             let delta = response.drag_delta().x;
             match index {
                 0 => {
-                    self.ui.panel_widths[0] =
-                        (self.ui.panel_widths[0] + delta).clamp(style::PARENT_MIN, style::PARENT_MAX)
+                    self.ui.panel_widths[0] = (self.ui.panel_widths[0] + delta)
+                        .clamp(style::PARENT_MIN, style::PARENT_MAX)
                 }
                 1 => {
                     self.ui.panel_widths[1] = (self.ui.panel_widths[1] - delta)
@@ -245,7 +146,8 @@ impl Heike {
                             let row_index = row.index();
                             let entry = &self.entries.visible_entries[row_index];
                             let is_focused = self.selection.selected_index == Some(row_index);
-                            let is_multi_selected = self.selection.multi_selection.contains(&entry.path);
+                            let is_multi_selected =
+                                self.selection.multi_selection.contains(&entry.path);
                             let is_cut = self.clipboard_op == Some(ClipboardOp::Cut)
                                 && self.clipboard.contains(&entry.path);
 
@@ -260,22 +162,51 @@ impl Heike {
                                     icon_text.push('▶');
                                     icon_text.push(' ');
                                 }
+
+                                // Git status indicator
+                                if let Some(status) = &entry.git_status {
+                                    let status_char = match status {
+                                        crate::entry::GitStatus::Modified => 'M',
+                                        crate::entry::GitStatus::Untracked => '?',
+                                        crate::entry::GitStatus::Ignored => '!',
+                                        crate::entry::GitStatus::Staged => '+',
+                                        crate::entry::GitStatus::Conflict => 'C',
+                                    };
+                                    icon_text.push(status_char);
+                                    icon_text.push(' ');
+                                }
+
                                 icon_text.push_str(entry.get_icon());
+
                                 let icon_color = if is_focused {
                                     egui::Color32::YELLOW
+                                } else if let Some(status) = &entry.git_status {
+                                    match status {
+                                        crate::entry::GitStatus::Modified => {
+                                            egui::Color32::from_rgb(255, 180, 50)
+                                        } // Orange
+                                        crate::entry::GitStatus::Untracked => {
+                                            egui::Color32::from_rgb(100, 255, 100)
+                                        } // Green
+                                        crate::entry::GitStatus::Ignored => egui::Color32::GRAY,
+                                        crate::entry::GitStatus::Staged => egui::Color32::GREEN,
+                                        crate::entry::GitStatus::Conflict => egui::Color32::RED,
+                                    }
                                 } else {
                                     ui.visuals().text_color()
                                 };
                                 ui.label(
-                                    egui::RichText::new(icon_text)
-                                        .size(14.0)
-                                        .color(icon_color)
+                                    egui::RichText::new(icon_text).size(14.0).color(icon_color),
                                 );
                             });
 
                             // Name column with context menu
                             row.col(|ui| {
-                                let mut display_name = if is_multi_selected { "✓ ".to_string() } else { String::new() };
+                                let mut display_name = if is_multi_selected {
+                                    "✓ ".to_string()
+                                } else {
+                                    String::new()
+                                };
                                 display_name.push_str(&entry.display_name());
 
                                 let mut text = egui::RichText::new(display_name);
@@ -304,7 +235,8 @@ impl Heike {
 
                                 // Double click to open/navigate
                                 if response.double_clicked() {
-                                    if let Some(entry) = self.entries.visible_entries.get(row_index) {
+                                    if let Some(entry) = self.entries.visible_entries.get(row_index)
+                                    {
                                         *next_navigation.borrow_mut() = Some(entry.path.clone());
                                     }
                                 }

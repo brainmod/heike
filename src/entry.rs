@@ -5,6 +5,15 @@ use std::time::SystemTime;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum GitStatus {
+    Modified,
+    Untracked,
+    Ignored,
+    Staged,
+    Conflict,
+}
+
 #[derive(Clone, Debug)]
 pub struct FileEntry {
     pub path: PathBuf,
@@ -14,6 +23,7 @@ pub struct FileEntry {
     pub size: u64,
     pub modified: SystemTime,
     pub extension: String,
+    pub git_status: Option<GitStatus>,
 }
 
 impl FileEntry {
@@ -44,6 +54,7 @@ impl FileEntry {
             size,
             modified,
             extension,
+            git_status: None,
         })
     }
 
@@ -190,7 +201,8 @@ impl FileEntry {
             // Default
             "" => "File",
             _ => "File",
-        }.to_string()
+        }
+        .to_string()
     }
 }
 

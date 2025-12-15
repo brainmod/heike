@@ -161,6 +161,57 @@
 * **Visual Feedback:** Cut files dimmed, multi-selected files highlighted
 * **Drag & Drop Overlay:** Visual indicator when dragging files over the window
 
+## **Configuration**
+
+Heike supports configuration via a `config.toml` file located in your standard config directory:
+- **Linux:** `~/.config/heike/config.toml`
+- **macOS:** `~/Library/Application Support/heike/config.toml`
+- **Windows:** `%APPDATA%\heike\config.toml`
+
+The application automatically saves your UI preferences (panel widths, theme, sort options) to this file on exit. You can also manually edit it to configure advanced settings like bookmarks and font overrides.
+
+### **Example Configuration**
+
+```toml
+[theme]
+mode = "dark"  # "dark" or "light"
+
+[panel]
+parent_width = 200.0   # Width of the parent directory pane (left)
+preview_width = 350.0  # Width of the preview pane (right)
+
+[font]
+font_size = 12.0
+icon_size = 14.0
+# Optional: Path to a custom .ttf font file for the UI text
+# custom_font_path = "/Users/username/Library/Fonts/CustomFont.ttf"
+
+[ui]
+show_hidden = false    # Show hidden files (starting with .)
+sort_by = "name"       # "name", "size", "modified", "extension"
+sort_order = "asc"     # "asc" or "desc"
+dirs_first = true      # Show directories before files
+
+[bookmarks]
+# Custom bookmarks accessed via 'g' + key
+# Supports tilde (~) expansion for home directory
+shortcuts = { "d" = "~/Downloads", "p" = "~/Projects", "c" = "~/.config" }
+
+[previews]
+# Enable or disable specific preview handlers
+enabled = [
+    "directory",
+    "image",
+    "markdown",
+    "archive",
+    "pdf",
+    "office",
+    "audio",
+    "text",
+    "binary"
+]
+```
+
 ## **Planned Enhancements**
 
 ### **Icon System Improvements**

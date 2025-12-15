@@ -88,10 +88,11 @@ impl PreviewHandler for AudioPreviewHandler {
         } else {
             let result = Self::extract_metadata(entry);
             if let Ok(ref content) = result {
-                context
-                    .preview_cache
-                    .borrow_mut()
-                    .insert(entry.path.clone(), content.clone(), entry.modified);
+                context.preview_cache.borrow_mut().insert(
+                    entry.path.clone(),
+                    content.clone(),
+                    entry.modified,
+                );
             }
             result
         };

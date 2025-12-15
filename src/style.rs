@@ -32,29 +32,16 @@ pub const MAX_PREVIEW_SIZE: u64 = 10 * 1024 * 1024;
 // --- Helper functions ---
 
 pub fn modal_width(ctx: &egui::Context) -> f32 {
-    let width = ctx.input(|i| {
-        i.viewport()
-            .inner_rect
-            .map(|r| r.width())
-            .unwrap_or(800.0)
-    });
+    let width = ctx.input(|i| i.viewport().inner_rect.map(|r| r.width()).unwrap_or(800.0));
     (width * MODAL_WIDTH_RATIO).clamp(MODAL_MIN_WIDTH, MODAL_MAX_WIDTH)
 }
 
 pub fn modal_max_height(ctx: &egui::Context) -> f32 {
-    let height = ctx.input(|i| {
-        i.viewport()
-            .inner_rect
-            .map(|r| r.height())
-            .unwrap_or(600.0)
-    });
+    let height = ctx.input(|i| i.viewport().inner_rect.map(|r| r.height()).unwrap_or(600.0));
     height * MODAL_HEIGHT_RATIO
 }
 
-pub fn truncated_label(
-    ui: &mut egui::Ui,
-    text: impl Into<egui::WidgetText>,
-) -> egui::Response {
+pub fn truncated_label(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
     ui.add(egui::Label::new(text).truncate())
 }
 

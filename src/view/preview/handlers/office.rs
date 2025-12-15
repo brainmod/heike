@@ -47,7 +47,11 @@ impl OfficePreviewHandler {
 
         if text_content.trim().is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.label(egui::RichText::new("Document appears to be empty").italics().weak());
+                ui.label(
+                    egui::RichText::new("Document appears to be empty")
+                        .italics()
+                        .weak(),
+                );
             });
         } else {
             egui::ScrollArea::vertical()
@@ -62,7 +66,12 @@ impl OfficePreviewHandler {
         }
     }
 
-    fn render_docx(&self, ui: &mut egui::Ui, entry: &FileEntry, context: &PreviewContext) -> Result<(), String> {
+    fn render_docx(
+        &self,
+        ui: &mut egui::Ui,
+        entry: &FileEntry,
+        context: &PreviewContext,
+    ) -> Result<(), String> {
         // Try cache first
         let cached_content = {
             let cache = context.preview_cache.borrow();
@@ -73,10 +82,11 @@ impl OfficePreviewHandler {
             cached
         } else {
             let text = Self::extract_docx_text(entry)?;
-            context
-                .preview_cache
-                .borrow_mut()
-                .insert(entry.path.clone(), text.clone(), entry.modified);
+            context.preview_cache.borrow_mut().insert(
+                entry.path.clone(),
+                text.clone(),
+                entry.modified,
+            );
             text
         };
 
@@ -140,7 +150,10 @@ impl OfficePreviewHandler {
                                     .header(20.0, |mut header| {
                                         for col in 0..preview_cols {
                                             header.col(|ui| {
-                                                ui.strong(format!("{}", (b'A' + col as u8) as char));
+                                                ui.strong(format!(
+                                                    "{}",
+                                                    (b'A' + col as u8) as char
+                                                ));
                                             });
                                         }
                                     })

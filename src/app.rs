@@ -1,8 +1,9 @@
-use crate::config::BookmarksConfig;
+use crate::config::{BookmarksConfig, Config};
 use crate::entry::FileEntry;
 use crate::io::{fuzzy_match, spawn_worker, IoCommand, IoResult};
 use crate::state::{
-    AppMode, ClipboardOp, NavigationState, SelectionState, EntryState, UIState, ModeState, TabsManager,
+    AppMode, ClipboardOp, EntryState, ModeState, NavigationState, SelectionState, TabsManager,
+    UIState,
 };
 use crate::style::{self, Theme};
 use crate::view;
@@ -26,6 +27,9 @@ enum TabAction {
 }
 
 pub struct Heike {
+    // Persistent configuration
+    pub config: Config,
+
     // Tabs management
     pub tabs: TabsManager,
 
@@ -65,7 +69,11 @@ pub struct Heike {
     pub cached_show_hidden: bool,
 }
 impl Heike {
-    pub fn new(ctx: egui::Context, config: crate::config::Config, cli_start_dir: Option<PathBuf>) -> Self {
+    pub fn new(
+        ctx: egui::Context,
+        config: crate::config::Config,
+        cli_start_dir: Option<PathBuf>,
+    ) -> Self {
         let start_path = if let Some(dir) = cli_start_dir {
             // Use CLI-provided directory if valid
             if dir.is_dir() {
@@ -127,6 +135,7 @@ impl Heike {
         let tabs = TabsManager::new(start_path.clone());
 
         let mut app = Self {
+            config: config.clone(),
             tabs,
             navigation: NavigationState::new(start_path.clone()),
             selection: SelectionState::new(),
@@ -278,14 +287,16 @@ impl Heike {
     pub(crate) fn apply_filter(&mut self) {
         // Save currently selected item path before filtering
         let previously_selected = self
-            .selection.selected_index
+            .selection
+            .selected_index
             .and_then(|idx| self.entries.visible_entries.get(idx))
             .map(|e| e.path.clone());
 
         if self.mode.mode == AppMode::Filtering && !self.mode.command_buffer.is_empty() {
             let query = self.mode.command_buffer.clone();
             self.entries.visible_entries = self
-                .entries.all_entries
+                .entries
+                .all_entries
                 .iter()
                 .filter(|e| fuzzy_match(&e.name, &query))
                 .cloned()
@@ -299,7 +310,12 @@ impl Heike {
 
         // Restore selection to previously selected item if possible
         if let Some(path) = previously_selected {
-            if let Some(idx) = self.entries.visible_entries.iter().position(|e| e.path == path) {
+            if let Some(idx) = self
+                .entries
+                .visible_entries
+                .iter()
+                .position(|e| e.path == path)
+            {
                 self.selection.selected_index = Some(idx);
             }
             // If path not found, keep current selection if valid; otherwise default to 0
@@ -323,7 +339,8 @@ impl Heike {
 
         // Separate directories and files if dirs_first is enabled
         let (mut dirs, mut files): (Vec<_>, Vec<_>) = self
-            .entries.visible_entries
+            .entries
+            .visible_entries
             .drain(..)
             .partition(|e| e.is_dir);
 
@@ -373,7 +390,9 @@ impl Heike {
         }) {
             Ok(mut watcher) => {
                 // Watch the current directory
-                if let Err(e) = watcher.watch(&self.navigation.current_path, RecursiveMode::NonRecursive) {
+                if let Err(e) =
+                    watcher.watch(&self.navigation.current_path, RecursiveMode::NonRecursive)
+                {
                     self.ui.error_message =
                         Some((format!("Failed to watch directory: {}", e), Instant::now()));
                     self.watcher = None;
@@ -464,15 +483,30 @@ impl Heike {
                 for path in &event.paths {
                     if let Some(updated_entry) = FileEntry::from_path(path.clone()) {
                         // Update in all_entries
-                        if let Some(entry) = self.entries.all_entries.iter_mut().find(|e| &e.path == path) {
+                        if let Some(entry) = self
+                            .entries
+                            .all_entries
+                            .iter_mut()
+                            .find(|e| &e.path == path)
+                        {
                             *entry = updated_entry.clone();
                         }
                         // Update in visible_entries
-                        if let Some(entry) = self.entries.visible_entries.iter_mut().find(|e| &e.path == path) {
+                        if let Some(entry) = self
+                            .entries
+                            .visible_entries
+                            .iter_mut()
+                            .find(|e| &e.path == path)
+                        {
                             *entry = updated_entry.clone();
                         }
                         // Update in parent_entries
-                        if let Some(entry) = self.entries.parent_entries.iter_mut().find(|e| &e.path == path) {
+                        if let Some(entry) = self
+                            .entries
+                            .parent_entries
+                            .iter_mut()
+                            .find(|e| &e.path == path)
+                        {
                             *entry = updated_entry;
                         }
                     }
@@ -500,7 +534,8 @@ impl Heike {
                     // If there's a pending selection path, find and select it
                     if let Some(pending_path) = self.navigation.pending_selection_path.take() {
                         if let Some(idx) = self
-            .entries.visible_entries
+                            .entries
+                            .visible_entries
                             .iter()
                             .position(|e| e.path == pending_path)
                         {
@@ -510,8 +545,11 @@ impl Heike {
 
                     // Validate selection after loading
                     if let Some(idx) = self.selection.selected_index {
-                        if idx >= self.entries.visible_entries.len() && !self.entries.visible_entries.is_empty() {
-                            self.selection.selected_index = Some(self.entries.visible_entries.len() - 1);
+                        if idx >= self.entries.visible_entries.len()
+                            && !self.entries.visible_entries.is_empty()
+                        {
+                            self.selection.selected_index =
+                                Some(self.entries.visible_entries.len() - 1);
                         }
                     }
                 }
@@ -563,14 +601,17 @@ impl Heike {
         if path.is_dir() {
             // Save current selection before navigating away
             if let Some(idx) = self.selection.selected_index {
-                self.selection.directory_selections
+                self.selection
+                    .directory_selections
                     .insert(self.navigation.current_path.clone(), idx);
             }
 
             self.navigation.current_path = path.clone();
 
             if self.navigation.history_index < self.navigation.history.len() - 1 {
-                self.navigation.history.truncate(self.navigation.history_index + 1);
+                self.navigation
+                    .history
+                    .truncate(self.navigation.history_index + 1);
             }
             self.navigation.history.push(path);
             self.navigation.history_index = self.navigation.history.len() - 1;
@@ -585,7 +626,8 @@ impl Heike {
         if let Some(parent) = self.navigation.current_path.parent() {
             // Save current selection before navigating up
             if let Some(idx) = self.selection.selected_index {
-                self.selection.directory_selections
+                self.selection
+                    .directory_selections
                     .insert(self.navigation.current_path.clone(), idx);
             }
             // When navigating to parent, select the child directory we came from
@@ -600,7 +642,8 @@ impl Heike {
         }
 
         if let Some(idx) = self.selection.selected_index {
-            self.selection.directory_selections
+            self.selection
+                .directory_selections
                 .insert(self.navigation.current_path.clone(), idx);
         }
 
@@ -619,7 +662,8 @@ impl Heike {
             }
         }
 
-        self.ui.set_error("Previous directory no longer exists".into());
+        self.ui
+            .set_error("Previous directory no longer exists".into());
     }
 
     pub(crate) fn navigate_forward(&mut self) {
@@ -628,7 +672,8 @@ impl Heike {
         }
 
         if let Some(idx) = self.selection.selected_index {
-            self.selection.directory_selections
+            self.selection
+                .directory_selections
                 .insert(self.navigation.current_path.clone(), idx);
         }
 
@@ -657,7 +702,8 @@ impl Heike {
         self.selection.multi_selection.clear();
         // Restore saved selection for this directory, or default to 0
         self.selection.selected_index = self
-            .selection.directory_selections
+            .selection
+            .directory_selections
             .get(&self.navigation.current_path)
             .copied()
             .or(Some(0));
@@ -687,7 +733,8 @@ impl Heike {
         } else {
             "Cut"
         };
-        self.ui.set_info(format!("{} {} files", op_text, self.clipboard.len()));
+        self.ui
+            .set_info(format!("{} {} files", op_text, self.clipboard.len()));
     }
 
     pub(crate) fn paste_clipboard(&mut self) {
@@ -769,7 +816,7 @@ impl Heike {
         let mut error_count = 0;
         for path in targets {
             match trash::delete(&path) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     error_count += 1;
                     eprintln!("Failed to move to trash: {}", e);
@@ -782,7 +829,8 @@ impl Heike {
         self.request_refresh();
 
         if error_count > 0 {
-            self.ui.set_error(format!("Failed to delete {} item(s)", error_count));
+            self.ui
+                .set_error(format!("Failed to delete {} item(s)", error_count));
         } else {
             self.ui.set_info("Items moved to trash".into());
         }
@@ -815,11 +863,7 @@ impl Heike {
         // Determine which files to rename
         let files_to_rename: Vec<PathBuf> = if !self.selection.multi_selection.is_empty() {
             // Use multi-selection if available
-            self.selection
-                .multi_selection
-                .iter()
-                .cloned()
-                .collect()
+            self.selection.multi_selection.iter().cloned().collect()
         } else if let Some(idx) = self.selection.selected_index {
             // Use current selection if no multi-selection
             if let Some(entry) = self.entries.visible_entries.get(idx) {
@@ -832,7 +876,8 @@ impl Heike {
         };
 
         if files_to_rename.is_empty() {
-            self.ui.set_error("No files selected for bulk rename".into());
+            self.ui
+                .set_error("No files selected for bulk rename".into());
             return;
         }
 
@@ -881,7 +926,8 @@ impl Heike {
             let mut seen = std::collections::HashSet::new();
             for name in &new_names {
                 if !seen.insert(name.trim()) {
-                    self.ui.set_error(format!("Duplicate filename: {}", name.trim()));
+                    self.ui
+                        .set_error(format!("Duplicate filename: {}", name.trim()));
                     return;
                 }
             }
@@ -928,7 +974,8 @@ impl Heike {
                     errors.join(", ")
                 ));
             } else {
-                self.ui.set_info(format!("Successfully renamed {} file(s)", success_count));
+                self.ui
+                    .set_info(format!("Successfully renamed {} file(s)", success_count));
             }
 
             self.mode.set_mode(AppMode::Normal);
@@ -950,46 +997,39 @@ impl Heike {
 
     /// Save current UI settings to configuration file
     fn save_settings(&mut self) {
-        use crate::config::{Config, ThemeConfig, PanelConfig, UiConfig, FontConfig};
+        use crate::style::Theme;
 
         let theme_mode = match self.ui.theme {
             Theme::Light => "light",
             Theme::Dark => "dark",
         };
 
-        let config = Config {
-            theme: ThemeConfig {
-                mode: theme_mode.to_string(),
-            },
-            font: FontConfig {
-                font_size: 12.0,
-                icon_size: 14.0,
-            },
-            panel: PanelConfig {
-                parent_width: self.ui.panel_widths[0],
-                preview_width: self.ui.panel_widths[1],
-            },
-            ui: UiConfig {
-                show_hidden: self.ui.show_hidden,
-                sort_by: match self.ui.sort_options.sort_by {
-                    crate::state::SortBy::Name => "name",
-                    crate::state::SortBy::Size => "size",
-                    crate::state::SortBy::Modified => "modified",
-                    crate::state::SortBy::Extension => "extension",
-                }.to_string(),
-                sort_order: match self.ui.sort_options.sort_order {
-                    crate::state::SortOrder::Ascending => "asc",
-                    crate::state::SortOrder::Descending => "desc",
-                }.to_string(),
-                dirs_first: self.ui.sort_options.dirs_first,
-            },
-            bookmarks: self.bookmarks.clone(),
-            previews: crate::config::PreviewConfig {
-                enabled: self.preview_registry.enabled_handler_names(),
-            },
-        };
+        // Update stored config with current UI state
+        self.config.theme.mode = theme_mode.to_string();
+        self.config.panel.parent_width = self.ui.panel_widths[0];
+        self.config.panel.preview_width = self.ui.panel_widths[1];
+        self.config.ui.show_hidden = self.ui.show_hidden;
+        self.config.ui.sort_by = match self.ui.sort_options.sort_by {
+            crate::state::SortBy::Name => "name",
+            crate::state::SortBy::Size => "size",
+            crate::state::SortBy::Modified => "modified",
+            crate::state::SortBy::Extension => "extension",
+        }
+        .to_string();
+        self.config.ui.sort_order = match self.ui.sort_options.sort_order {
+            crate::state::SortOrder::Ascending => "asc",
+            crate::state::SortOrder::Descending => "desc",
+        }
+        .to_string();
+        self.config.ui.dirs_first = self.ui.sort_options.dirs_first;
 
-        let _ = config.save();
+        // Update bookmarks (if modified in UI, currently shared)
+        self.config.bookmarks = self.bookmarks.clone();
+
+        // Update enabled previews
+        self.config.previews.enabled = self.preview_registry.enabled_handler_names();
+
+        let _ = self.config.save();
         self.ui.last_settings_save = Instant::now();
     }
 
@@ -1035,7 +1075,6 @@ impl Heike {
 
     // --- Drag and Drop Handling ---
 
-
     // --- Rendering Methods ---
 
     pub(crate) fn execute_command(&mut self, _ctx: &egui::Context) {
@@ -1062,7 +1101,8 @@ impl Heike {
                             self.request_refresh();
                         }
                         Err(e) => {
-                            self.ui.set_error(format!("Failed to create directory: {}", e));
+                            self.ui
+                                .set_error(format!("Failed to create directory: {}", e));
                         }
                     }
                 }
@@ -1108,10 +1148,15 @@ impl Heike {
                 }
             }
             "help" => {
-                self.ui.set_info("Commands: q/quit, mkdir <name>, touch <file>, cd <path>, help".into());
+                self.ui.set_info(
+                    "Commands: q/quit, mkdir <name>, touch <file>, cd <path>, help".into(),
+                );
             }
             _ => {
-                self.ui.set_error(format!("Unknown command: {}. Type 'help' for available commands.", parts[0]));
+                self.ui.set_error(format!(
+                    "Unknown command: {}. Type 'help' for available commands.",
+                    parts[0]
+                ));
             }
         }
 
@@ -1240,7 +1285,8 @@ impl eframe::App for Heike {
                     .max_width(breadcrumb_width)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            let components: Vec<_> = self.navigation.current_path.components().collect();
+                            let components: Vec<_> =
+                                self.navigation.current_path.components().collect();
                             let mut path_acc = PathBuf::new();
                             for component in components {
                                 path_acc.push(component);
@@ -1256,7 +1302,10 @@ impl eframe::App for Heike {
 
                 // Right controls in remaining space
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.checkbox(&mut self.ui.show_hidden, "Hidden (.)").changed() {
+                    if ui
+                        .checkbox(&mut self.ui.show_hidden, "Hidden (.)")
+                        .changed()
+                    {
                         self.request_refresh();
                     }
 
@@ -1335,11 +1384,7 @@ impl eframe::App for Heike {
                     if let Some(entry) = self.entries.visible_entries.get(idx) {
                         ui.separator();
                         let type_str = if entry.is_dir { "dir" } else { "file" };
-                        ui.label(format!(
-                            "{}: {}",
-                            type_str,
-                            bytesize::ByteSize(entry.size)
-                        ));
+                        ui.label(format!("{}: {}", type_str, bytesize::ByteSize(entry.size)));
                     }
                 }
 
@@ -1365,13 +1410,17 @@ impl eframe::App for Heike {
                 if !self.selection.multi_selection.is_empty() {
                     ui.separator();
                     // Calculate total size of selected files
-                    let total_size: u64 = self.entries.all_entries.iter()
+                    let total_size: u64 = self
+                        .entries
+                        .all_entries
+                        .iter()
                         .filter(|e| self.selection.multi_selection.contains(&e.path))
                         .map(|e| e.size)
                         .sum();
                     ui.colored_label(
                         egui::Color32::LIGHT_BLUE,
-                        format!("{} selected ({})", 
+                        format!(
+                            "{} selected ({})",
                             self.selection.multi_selection.len(),
                             bytesize::ByteSize(total_size)
                         ),
@@ -1449,36 +1498,42 @@ impl eframe::App for Heike {
                                                 };
 
                                                 // Make the label clickable
-                                                let label_response = style::truncated_label_with_sense(
-                                                    ui,
-                                                    text,
-                                                    egui::Sense::click(),
-                                                );
+                                                let label_response =
+                                                    style::truncated_label_with_sense(
+                                                        ui,
+                                                        text,
+                                                        egui::Sense::click(),
+                                                    );
 
                                                 if label_response.clicked() {
-                                                    *next_result_selection.borrow_mut() = Some(row_index);
+                                                    *next_result_selection.borrow_mut() =
+                                                        Some(row_index);
                                                 }
 
                                                 // Show line content preview (truncated safely at char boundaries)
-                                                let preview = if result.line_content.chars().count() > 60 {
-                                                    let truncated: String = result.line_content
-                                                        .chars()
-                                                        .take(60)
-                                                        .collect();
-                                                    format!("{}...", truncated)
-                                                } else {
-                                                    result.line_content.clone()
-                                                };
-                                                let preview_response = style::truncated_label_with_sense(
-                                                    ui,
-                                                    egui::RichText::new(preview)
-                                                        .size(10.0)
-                                                        .color(egui::Color32::GRAY),
-                                                    egui::Sense::click(),
-                                                );
+                                                let preview =
+                                                    if result.line_content.chars().count() > 60 {
+                                                        let truncated: String = result
+                                                            .line_content
+                                                            .chars()
+                                                            .take(60)
+                                                            .collect();
+                                                        format!("{}...", truncated)
+                                                    } else {
+                                                        result.line_content.clone()
+                                                    };
+                                                let preview_response =
+                                                    style::truncated_label_with_sense(
+                                                        ui,
+                                                        egui::RichText::new(preview)
+                                                            .size(10.0)
+                                                            .color(egui::Color32::GRAY),
+                                                        egui::Sense::click(),
+                                                    );
 
                                                 if preview_response.clicked() {
-                                                    *next_result_selection.borrow_mut() = Some(row_index);
+                                                    *next_result_selection.borrow_mut() =
+                                                        Some(row_index);
                                                 }
                                             });
                                         });
@@ -1574,9 +1629,6 @@ impl eframe::App for Heike {
                 self.render_input_modal(ctx);
                 self.render_bulk_rename_modal(ctx);
 
-                self.render_tab_bar(ui);
-                ui.add_space(6.0);
-
                 // Strip-based layout with three panes and dividers
                 use egui_extras::{Size, StripBuilder};
                 StripBuilder::new(ui)
@@ -1619,5 +1671,8 @@ impl eframe::App for Heike {
             action(self);
         }
     }
-}
 
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_settings();
+    }
+}

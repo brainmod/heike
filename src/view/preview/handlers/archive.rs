@@ -71,7 +71,10 @@ impl ArchivePreviewHandler {
                         items
                     };
 
-                    (items_to_show, if has_more { None } else { Some(shown_count) })
+                    (
+                        items_to_show,
+                        if has_more { None } else { Some(shown_count) },
+                    )
                 })
             })
         } else {
@@ -166,10 +169,11 @@ impl PreviewHandler for ArchivePreviewHandler {
             let result = Self::extract_contents(entry);
             match result {
                 Ok(ref content) => {
-                    context
-                        .preview_cache
-                        .borrow_mut()
-                        .insert(entry.path.clone(), content.clone(), entry.modified);
+                    context.preview_cache.borrow_mut().insert(
+                        entry.path.clone(),
+                        content.clone(),
+                        entry.modified,
+                    );
                     Self::parse_cached(content)
                 }
                 Err(e) => return Err(e),
@@ -188,7 +192,11 @@ impl PreviewHandler for ArchivePreviewHandler {
                 let count_msg = match total {
                     Some(t) => {
                         if t > Self::MAX_PREVIEW_ITEMS {
-                            format!("Archive contains {} items (showing first {})", t, Self::MAX_PREVIEW_ITEMS)
+                            format!(
+                                "Archive contains {} items (showing first {})",
+                                t,
+                                Self::MAX_PREVIEW_ITEMS
+                            )
                         } else {
                             format!("Archive contains {} items", t)
                         }

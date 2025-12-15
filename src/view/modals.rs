@@ -166,10 +166,7 @@ impl Heike {
 
                         ui.add_space(10.0);
                         ui.label("Options:");
-                        ui.checkbox(
-                            &mut self.ui.search_options.case_sensitive,
-                            "Case sensitive",
-                        );
+                        ui.checkbox(&mut self.ui.search_options.case_sensitive, "Case sensitive");
                         ui.checkbox(&mut self.ui.search_options.use_regex, "Use regex");
                         ui.checkbox(
                             &mut self.ui.search_options.search_hidden,
@@ -183,9 +180,7 @@ impl Heike {
 
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            if ui.button("Search").clicked()
-                                && !self.ui.search_query.is_empty()
-                            {
+                            if ui.button("Search").clicked() && !self.ui.search_query.is_empty() {
                                 self.ui.search_in_progress = true;
                                 // Reset all search statistics
                                 self.ui.search_file_count = 0;
@@ -238,8 +233,7 @@ impl Heike {
                         };
                         ui.horizontal(|ui| {
                             ui.label(prefix);
-                            let response =
-                                ui.text_edit_singleline(&mut self.mode.command_buffer);
+                            let response = ui.text_edit_singleline(&mut self.mode.command_buffer);
                             if self.mode.focus_input {
                                 response.request_focus();
                                 self.mode.focus_input = false;
@@ -257,14 +251,12 @@ impl Heike {
             return;
         }
 
-        let (file_count, focus_input) = if let AppMode::BulkRename {
-            original_paths, ..
-        } = &self.mode.mode
-        {
-            (original_paths.len(), self.mode.focus_input)
-        } else {
-            return;
-        };
+        let (file_count, focus_input) =
+            if let AppMode::BulkRename { original_paths, .. } = &self.mode.mode {
+                (original_paths.len(), self.mode.focus_input)
+            } else {
+                return;
+            };
 
         egui::Window::new("Bulk Rename")
             .collapsible(false)
