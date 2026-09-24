@@ -67,6 +67,11 @@ pub struct Heike {
     // Parent directory cache to avoid redundant reads
     pub cached_parent_path: Option<PathBuf>,
     pub cached_show_hidden: bool,
+
+    // Per-frame work guards
+    applied_theme: Option<Theme>,
+    last_filter_query: Option<String>,
+    last_saved_config: String,
 }
 impl Heike {
     pub fn new(
@@ -156,6 +161,9 @@ impl Heike {
             preview_cache: RefCell::new(view::PreviewCache::new()),
             cached_parent_path: None,
             cached_show_hidden: false,
+            applied_theme: None,
+            last_filter_query: None,
+            last_saved_config: toml::to_string_pretty(&config).unwrap_or_default(),
         };
 
         app.request_refresh();
@@ -489,7 +497,11 @@ impl Heike {
                             .iter_mut()
                             .find(|e| &e.path == path)
                         {
-                            *entry = updated_entry.clone();
+                            let git_status = entry.git_status.take();
+                            *entry = FileEntry {
+                                git_status,
+                                ..updated_entry.clone()
+                            };
                         }
                         // Update in visible_entries
                         if let Some(entry) = self
@@ -498,7 +510,11 @@ impl Heike {
                             .iter_mut()
                             .find(|e| &e.path == path)
                         {
-                            *entry = updated_entry.clone();
+                            let git_status = entry.git_status.take();
+                            *entry = FileEntry {
+                                git_status,
+                                ..updated_entry.clone()
+                            };
                         }
                         // Update in parent_entries
                         if let Some(entry) = self
@@ -507,7 +523,11 @@ impl Heike {
                             .iter_mut()
                             .find(|e| &e.path == path)
                         {
-                            *entry = updated_entry;
+                            let git_status = entry.git_status.take();
+                            *entry = FileEntry {
+                                git_status,
+                                ..updated_entry
+                            };
                         }
                     }
                 }
@@ -555,6 +575,24 @@ impl Heike {
                 }
                 IoResult::ParentLoaded(entries) => {
                     self.entries.parent_entries = entries;
+                }
+                IoResult::GitStatusLoaded { path, statuses } => {
+                    let targets: Vec<&mut Vec<FileEntry>> = if path == self.navigation.current_path
+                    {
+                        vec![
+                            &mut self.entries.all_entries,
+                            &mut self.entries.visible_entries,
+                        ]
+                    } else if self.navigation.current_path.parent() == Some(path.as_path()) {
+                        vec![&mut self.entries.parent_entries]
+                    } else {
+                        continue;
+                    };
+                    for entries in targets {
+                        for entry in entries.iter_mut() {
+                            entry.git_status = statuses.get(&entry.name).cloned();
+                        }
+                    }
                 }
                 IoResult::SearchCompleted(results) => {
                     self.ui.search_in_progress = false;
@@ -1049,7 +1087,12 @@ impl Heike {
         // Update enabled previews
         self.config.previews.enabled = self.preview_registry.enabled_handler_names();
 
-        let _ = self.config.save();
+        // Only write the file when something actually changed
+        if let Ok(serialized) = toml::to_string_pretty(&self.config) {
+            if serialized != self.last_saved_config && self.config.save().is_ok() {
+                self.last_saved_config = serialized;
+            }
+        }
         self.ui.last_settings_save = Instant::now();
     }
 
@@ -1187,10 +1230,13 @@ impl Heike {
 
 impl eframe::App for Heike {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Apply theme
-        match self.ui.theme {
-            Theme::Light => ctx.set_visuals(egui::Visuals::light()),
-            Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+        // Apply theme (only when it changes; set_visuals restyles everything)
+        if self.applied_theme != Some(self.ui.theme) {
+            match self.ui.theme {
+                Theme::Light => ctx.set_visuals(egui::Visuals::light()),
+                Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+            }
+            self.applied_theme = Some(self.ui.theme);
         }
 
         // Auto-dismiss old messages
@@ -1213,12 +1259,18 @@ impl eframe::App for Heike {
             }
         });
 
+        // Re-filter only when the query changes, not every frame
         if self.mode.mode == AppMode::Filtering {
-            let old_len = self.entries.visible_entries.len();
-            self.apply_filter();
-            if self.entries.visible_entries.len() != old_len {
-                self.selection.last_selection_change = Instant::now();
+            if self.last_filter_query.as_ref() != Some(&self.mode.command_buffer) {
+                self.last_filter_query = Some(self.mode.command_buffer.clone());
+                let old_len = self.entries.visible_entries.len();
+                self.apply_filter();
+                if self.entries.visible_entries.len() != old_len {
+                    self.selection.last_selection_change = Instant::now();
+                }
             }
+        } else {
+            self.last_filter_query = None;
         }
 
         let next_navigation = std::cell::RefCell::new(None);

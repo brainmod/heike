@@ -1,10 +1,11 @@
-use crate::entry::FileEntry;
+use crate::entry::{FileEntry, GitStatus};
 use crate::state::{SearchOptions, SearchResult};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::thread::{self, JoinHandle};
 
-use super::directory::read_directory;
+use super::directory::{git_statuses, read_directory};
 use super::search::perform_search;
 
 /// Maximum number of pending commands in the worker queue.
@@ -29,6 +30,11 @@ pub enum IoResult {
         entries: Vec<FileEntry>,
     },
     ParentLoaded(Vec<FileEntry>),
+    /// Sent after DirectoryLoaded/ParentLoaded so listings show without waiting on git
+    GitStatusLoaded {
+        path: PathBuf,
+        statuses: HashMap<String, GitStatus>,
+    },
     SearchCompleted(Vec<SearchResult>),
     SearchProgress {
         files_searched: usize,
@@ -73,21 +79,26 @@ pub fn spawn_worker(ctx: eframe::egui::Context) -> WorkerHandle {
                     // Graceful shutdown - exit the loop
                     break;
                 }
-                IoCommand::LoadDirectory(path, hidden) => match read_directory(&path, hidden, true)
-                {
+                IoCommand::LoadDirectory(path, hidden) => match read_directory(&path, hidden) {
                     Ok(entries) => {
                         let _ = res_tx.send(IoResult::DirectoryLoaded {
                             path: path.clone(),
                             entries,
                         });
+                        ctx_clone.request_repaint();
+                        let statuses = git_statuses(&path);
+                        let _ = res_tx.send(IoResult::GitStatusLoaded { path, statuses });
                     }
                     Err(e) => {
                         let _ = res_tx.send(IoResult::Error(e.to_string()));
                     }
                 },
-                IoCommand::LoadParent(path, hidden) => match read_directory(&path, hidden, true) {
+                IoCommand::LoadParent(path, hidden) => match read_directory(&path, hidden) {
                     Ok(entries) => {
                         let _ = res_tx.send(IoResult::ParentLoaded(entries));
+                        ctx_clone.request_repaint();
+                        let statuses = git_statuses(&path);
+                        let _ = res_tx.send(IoResult::GitStatusLoaded { path, statuses });
                     }
                     Err(_) => {
                         let _ = res_tx.send(IoResult::ParentLoaded(Vec::new()));

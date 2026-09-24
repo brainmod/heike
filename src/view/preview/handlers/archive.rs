@@ -1,7 +1,7 @@
 // Archive preview handler (zip, tar, gz, etc.)
 
 use crate::entry::FileEntry;
-use crate::view::preview::handler::{PreviewContext, PreviewHandler};
+use crate::view::preview::handler::{show_loading, PreviewContext, PreviewHandler};
 use eframe::egui;
 use flate2::read::GzDecoder;
 use std::fs;
@@ -157,28 +157,16 @@ impl PreviewHandler for ArchivePreviewHandler {
             return Ok(());
         }
 
-        // Try to get cached content
-        let cached_content = {
-            let cache = context.preview_cache.borrow();
-            cache.get(&entry.path, entry.modified)
+        let Some(content) =
+            context
+                .preview_cache
+                .borrow_mut()
+                .load(ui.ctx(), entry, Self::extract_contents)
+        else {
+            show_loading(ui);
+            return Ok(());
         };
-
-        let parsed = if let Some(cached) = cached_content {
-            Self::parse_cached(&cached)
-        } else {
-            let result = Self::extract_contents(entry);
-            match result {
-                Ok(ref content) => {
-                    context.preview_cache.borrow_mut().insert(
-                        entry.path.clone(),
-                        content.clone(),
-                        entry.modified,
-                    );
-                    Self::parse_cached(content)
-                }
-                Err(e) => return Err(e),
-            }
-        };
+        let parsed = Self::parse_cached(&content?);
 
         match parsed {
             Some((items, total)) => {

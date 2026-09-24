@@ -332,6 +332,24 @@ if let Some((_, time)) = &self.error_message {
 }
 ```
 
+### 5b. Preview Loading
+
+**NEVER read or parse files inside `render()`** — it runs every frame on the UI thread. Use the background loader, which caches by path + mtime:
+
+```rust
+let Some(content) = context
+    .preview_cache
+    .borrow_mut()
+    .load(ui.ctx(), entry, Self::extract_contents) // fn(&FileEntry) -> Result<String, String>
+else {
+    show_loading(ui);  // repaint is requested when the load finishes
+    return Ok(());
+};
+let content = content?;  // Arc<str>
+```
+
+Cache any other expensive per-file work (e.g. syntax highlighting) in a `Mutex` on the handler, keyed by path + mtime.
+
 ### 6. Preview Size Guards
 
 **ALWAYS check file size before preview:**
@@ -883,7 +901,7 @@ When creating pull requests:
 - [x] **Rename accepted path separators / `..`** — `fileops::validate_file_name` (single and bulk rename)
 - [x] **Cut across filesystems failed** — `fileops::move_path` falls back to copy + delete
 - [x] **Search error cleared the file listing** — separate `IoResult::SearchError`
-- [ ] **Git status parsing** — rename lines (`R old -> new`) and quoted/escaped names not handled (use `-z`)
+- [x] **Git status parsing** — now `--porcelain=v1 -z` (renames, spaces, quoted names), with tests
 - [ ] **Case-sensitive name sort** — `sort_visible_entries` uses `a.name.cmp`, loader sorts case-insensitively; no natural sort
 
 ## High: Layout Fixes
@@ -927,13 +945,17 @@ When creating pull requests:
 - [x] **Parent directory caching** — Skip re-read when parent unchanged
 - [x] **Lazy archive preview** — Don't iterate full archive for count
 - [x] **Directory preview re-read every frame** — was calling `read_directory` (+2 `git` spawns) on the UI thread per frame; now cached by (path, mtime, show_hidden) and skips git
-- [ ] **Git status cost** — 2 `git` spawns per load (current + parent) with `--ignored`; cache per repo root or use `gix`
-- [ ] **Filter mode re-filters every frame** — clones + re-sorts all entries each frame; only recompute when query changes
-- [ ] **Settings saved every 10s unconditionally** — add dirty flag, save on change/exit
-- [ ] **`set_visuals` every frame** — only on theme change
-- [ ] **Heavy previews on UI thread** — PDF/Office/archive parsing blocks; move to worker with spinner
+- [x] **Git status cost** — repo root found by walking up for `.git` (no spawn outside repos), one `git status` per load, sent as a separate `IoResult::GitStatusLoaded` after the listing so it never delays it
+- [x] **Filter mode re-filters every frame** — now only when the query changes (`last_filter_query`)
+- [x] **Settings saved every 10s unconditionally** — still checked every 10s, but written only if the serialized config changed
+- [x] **`set_visuals` every frame** — only on theme change (`applied_theme`)
+- [x] **Heavy previews on UI thread** — all file reads/parsing (text, markdown, PDF, DOCX, XLSX, archive, audio) run on background threads via `PreviewCache::load`, spinner meanwhile
+- [x] **Syntax highlighting every frame** — text preview re-highlighted 1000 lines and cloned the file content per frame; now highlighted `LayoutJob` cached per (path, mtime, theme), cache stores `Arc<str>`
+- [x] **Binary check every frame** — `TextPreviewHandler::can_preview` read 8KB per frame; now cached per (path, mtime)
+- [x] **Image textures never freed** — previous image `forget_image`d on change
+- [ ] **Permissions stat per frame** — `get_permissions_string` calls `fs::metadata` each frame; store mode in `FileEntry`
+- [ ] **Git status on the shared worker** — a slow `git status` in a huge repo still delays the next queued load
 - [ ] **Single worker thread** — search blocks directory loads, no cancel; separate search thread + cancel flag
-- [ ] **Image textures never freed** — `ctx.forget_image` on selection change
 - [ ] **Blocking file ops** — paste/trash run on UI thread; move to worker with progress (see Task manager UI)
 
 ## Medium: UX Features
@@ -1081,3 +1103,10 @@ When creating pull requests:
   - `read_directory(path, show_hidden, with_git)` — preview skips git
   - Directory preview cached by (path, mtime, show_hidden)
   - `IoResult::SearchError` no longer wipes the listing
+
+  **Performance batch:**
+  - Background preview loader (`PreviewCache::load`) for all file-reading handlers; XLSX converted to it
+  - Cached syntax-highlighted `LayoutJob`, binary check and `Arc<str>` cache (no per-frame 10MB clones)
+  - Git status: no-spawn repo detection, single `-z` spawn, delivered after the listing
+  - Filter recomputed only on query change; `set_visuals` only on theme change; settings written only when changed
+  - Previous image texture freed on change

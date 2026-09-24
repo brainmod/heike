@@ -41,7 +41,7 @@ impl DirectoryPreviewHandler {
             }
         }
         let entries = Arc::new(
-            read_directory(&entry.path, show_hidden, false)
+            read_directory(&entry.path, show_hidden)
                 .map_err(|e| format!("Cannot read directory: {}", e))?,
         );
         *cache = Some((entry.path.clone(), mtime, show_hidden, entries.clone()));

@@ -4,20 +4,9 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-pub fn read_directory(
-    path: &Path,
-    show_hidden: bool,
-    with_git: bool,
-) -> Result<Vec<FileEntry>, std::io::Error> {
+pub fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<FileEntry>, std::io::Error> {
     let mut entries = Vec::new();
     let read_dir = fs::read_dir(path)?;
-
-    // Git status spawns two processes, so callers opt in
-    let git_statuses = if with_git {
-        get_git_statuses(path)
-    } else {
-        HashMap::new()
-    };
 
     for entry in read_dir.flatten() {
         let path = entry.path();
@@ -28,10 +17,7 @@ pub fn read_directory(
                 }
             }
         }
-        if let Some(mut file_entry) = FileEntry::from_path(path) {
-            if let Some(status) = git_statuses.get(&file_entry.name) {
-                file_entry.git_status = Some(status.clone());
-            }
+        if let Some(file_entry) = FileEntry::from_path(path) {
             entries.push(file_entry);
         }
     }
@@ -44,68 +30,82 @@ pub fn read_directory(
     Ok(entries)
 }
 
-fn get_git_statuses(dir_path: &Path) -> HashMap<String, GitStatus> {
-    let mut statuses = HashMap::new();
-
-    // 1. Get prefix (relative path of current dir from repo root)
-    let prefix = match Command::new("git")
-        .arg("rev-parse")
-        .arg("--show-prefix")
-        .current_dir(dir_path)
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).trim().to_string()
-        }
-        _ => return statuses, // Not a git repo or git not found
+/// Git status of each immediate child of `dir_path`, keyed by file name.
+/// Finds the repo root without spawning, so non-repo directories cost nothing;
+/// inside a repo it runs a single `git status`.
+pub fn git_statuses(dir_path: &Path) -> HashMap<String, GitStatus> {
+    let Ok(dir) = dir_path.canonicalize() else {
+        return HashMap::new();
     };
+    let Some(root) = dir.ancestors().find(|a| a.join(".git").exists()) else {
+        return HashMap::new();
+    };
+    let mut prefix = dir
+        .strip_prefix(root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    if !prefix.is_empty() {
+        prefix.push('/');
+    }
 
-    // 2. Get status of files in current dir (and subdirs)
     let output = match Command::new("git")
-        .arg("status")
-        .arg("--porcelain")
-        .arg("--ignored")
-        .arg(".")
-        .current_dir(dir_path)
+        .args([
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--ignored",
+            "--untracked-files=normal",
+            "--",
+            ".",
+        ])
+        .current_dir(&dir)
         .output()
     {
         Ok(o) if o.status.success() => o,
-        _ => return statuses,
+        _ => return HashMap::new(),
     };
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if line.len() < 4 {
+    parse_porcelain_z(&String::from_utf8_lossy(&output.stdout), &prefix)
+}
+
+/// Parse `git status --porcelain=v1 -z` output (paths relative to the repo root)
+/// into statuses for the immediate children of the directory at `prefix`.
+fn parse_porcelain_z(output: &str, prefix: &str) -> HashMap<String, GitStatus> {
+    let mut statuses = HashMap::new();
+    let mut records = output.split('\0');
+
+    while let Some(record) = records.next() {
+        if record.len() < 4 || !record.is_char_boundary(3) {
             continue;
         }
-        let status_code = &line[..2];
-        let raw_path = line[3..].trim();
-        // Handle basic quoting
-        let raw_path = raw_path.trim_matches('"');
-
-        if let Some(local_path) = raw_path.strip_prefix(&prefix) {
-            if local_path.is_empty() {
-                continue;
-            }
-
-            // Get the immediate child name in current dir
-            let component = local_path.split('/').next().unwrap_or(local_path);
-
-            let status = match status_code {
-                "??" => GitStatus::Untracked,
-                "!!" => GitStatus::Ignored,
-                s if s.contains('U') => GitStatus::Conflict,
-                s if s.contains('M') => GitStatus::Modified,
-                s if s.contains('A') => GitStatus::Staged,
-                s if s.contains('D') => GitStatus::Modified,
-                _ => continue,
-            };
-
-            statuses
-                .entry(component.to_string())
-                .and_modify(|e| *e = prioritize_status(e, &status))
-                .or_insert(status);
+        let status_code = &record[..2];
+        // Renames/copies are followed by a record holding the original path
+        if status_code.contains('R') || status_code.contains('C') {
+            records.next();
         }
+
+        let Some(local_path) = record[3..].strip_prefix(prefix) else {
+            continue;
+        };
+        // Immediate child name in this directory
+        let component = local_path.split('/').next().unwrap_or(local_path);
+        if component.is_empty() {
+            continue;
+        }
+
+        let status = match status_code {
+            "??" => GitStatus::Untracked,
+            "!!" => GitStatus::Ignored,
+            s if s.contains('U') => GitStatus::Conflict,
+            s if s.contains('M') || s.contains('D') || s.contains('T') => GitStatus::Modified,
+            s if s.contains('A') || s.contains('R') || s.contains('C') => GitStatus::Staged,
+            _ => continue,
+        };
+
+        statuses
+            .entry(component.to_string())
+            .and_modify(|e| *e = prioritize_status(e, &status))
+            .or_insert(status);
     }
 
     statuses
@@ -158,4 +158,32 @@ pub fn is_likely_binary(path: &Path) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_porcelain_z_for_immediate_children() {
+        let out = "?? src/new.rs\0 M src/app.rs\0R  src/b.rs\0src/a.rs\0!! target/\0 M src/io/x.rs\0M  README.md\0";
+        let s = parse_porcelain_z(out, "src/");
+        assert_eq!(s.get("new.rs"), Some(&GitStatus::Untracked));
+        assert_eq!(s.get("app.rs"), Some(&GitStatus::Modified));
+        assert_eq!(s.get("b.rs"), Some(&GitStatus::Staged));
+        assert_eq!(s.get("a.rs"), None); // rename source is skipped
+        assert_eq!(s.get("io"), Some(&GitStatus::Modified));
+        assert_eq!(s.len(), 4);
+
+        let root = parse_porcelain_z(out, "");
+        assert_eq!(root.get("src"), Some(&GitStatus::Modified));
+        assert_eq!(root.get("target"), Some(&GitStatus::Ignored));
+        assert_eq!(root.get("README.md"), Some(&GitStatus::Modified));
+    }
+
+    #[test]
+    fn handles_spaces_in_names() {
+        let s = parse_porcelain_z("?? my file.txt\0", "");
+        assert_eq!(s.get("my file.txt"), Some(&GitStatus::Untracked));
+    }
 }
