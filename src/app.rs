@@ -1,5 +1,5 @@
 use crate::config::{BookmarksConfig, Config};
-use crate::entry::FileEntry;
+use crate::entry::{natural_cmp, FileEntry};
 use crate::io::{fileops, fuzzy_match, spawn_worker, IoCommand, IoResult};
 use crate::state::{
     AppMode, ClipboardOp, EntryState, ModeState, NavigationState, SelectionState, TabsManager,
@@ -99,8 +99,6 @@ impl Heike {
         let worker = spawn_worker(ctx.clone());
         let cmd_tx = worker.command_tx;
         let res_rx = worker.result_rx;
-        // Note: worker.thread_handle is dropped here, but the thread continues running
-        // The worker will exit gracefully when command_tx is dropped (on app close)
         let (_watch_tx, watch_rx) = channel();
 
         // Parse theme from config
@@ -355,7 +353,7 @@ impl Heike {
         // Sort both groups by the selected criteria
         let sort_fn = |a: &FileEntry, b: &FileEntry| -> std::cmp::Ordering {
             let cmp = match self.ui.sort_options.sort_by {
-                SortBy::Name => a.name.cmp(&b.name),
+                SortBy::Name => natural_cmp(&a.name, &b.name),
                 SortBy::Size => a.size.cmp(&b.size),
                 SortBy::Modified => a.modified.cmp(&b.modified),
                 SortBy::Extension => a.extension.cmp(&b.extension),
@@ -858,14 +856,14 @@ impl Heike {
             HashSet::new()
         };
 
-        let mut error_count = 0;
+        let mut failed: Vec<String> = Vec::new();
         for path in targets {
-            match trash::delete(&path) {
-                Ok(_) => {}
-                Err(e) => {
-                    error_count += 1;
-                    eprintln!("Failed to move to trash: {}", e);
-                }
+            if let Err(e) = trash::delete(&path) {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                failed.push(format!("{}: {}", name, e));
             }
         }
 
@@ -873,11 +871,14 @@ impl Heike {
         self.selection.multi_selection.clear();
         self.request_refresh();
 
-        if error_count > 0 {
-            self.ui
-                .set_error(format!("Failed to delete {} item(s)", error_count));
-        } else {
-            self.ui.set_info("Items moved to trash".into());
+        match failed.as_slice() {
+            [] => self.ui.set_info("Items moved to trash".into()),
+            [one] => self.ui.set_error(format!("Failed to delete {}", one)),
+            [first, rest @ ..] => self.ui.set_error(format!(
+                "Failed to delete {} items (first: {})",
+                rest.len() + 1,
+                first
+            )),
         }
     }
 

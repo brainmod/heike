@@ -62,8 +62,6 @@ heike/
 ├── assets/
 │   ├── heike_icon.png
 │   └── JetBrainsMonoNerdFont-Regular.ttf
-├── examples/
-│   └── convert_icon.rs     # Icon conversion utility
 ├── Cargo.toml              # Dependencies and metadata
 ├── README.md               # User-facing documentation
 ├── CLAUDE.md               # This file (AI assistant guide)
@@ -902,7 +900,7 @@ When creating pull requests:
 - [x] **Cut across filesystems failed** — `fileops::move_path` falls back to copy + delete
 - [x] **Search error cleared the file listing** — separate `IoResult::SearchError`
 - [x] **Git status parsing** — now `--porcelain=v1 -z` (renames, spaces, quoted names), with tests
-- [ ] **Case-sensitive name sort** — `sort_visible_entries` uses `a.name.cmp`, loader sorts case-insensitively; no natural sort
+- [x] **Case-sensitive name sort** — loader and `sort_visible_entries` share `entry::natural_cmp` (case-insensitive, `file2` < `file10`)
 
 ## High: Layout Fixes
 
@@ -953,7 +951,7 @@ When creating pull requests:
 - [x] **Syntax highlighting every frame** — text preview re-highlighted 1000 lines and cloned the file content per frame; now highlighted `LayoutJob` cached per (path, mtime, theme), cache stores `Arc<str>`
 - [x] **Binary check every frame** — `TextPreviewHandler::can_preview` read 8KB per frame; now cached per (path, mtime)
 - [x] **Image textures never freed** — previous image `forget_image`d on change
-- [ ] **Permissions stat per frame** — `get_permissions_string` calls `fs::metadata` each frame; store mode in `FileEntry`
+- [x] **Permissions stat per frame** — `FileEntry.permissions` captured at load
 - [ ] **Git status on the shared worker** — a slow `git status` in a huge repo still delays the next queued load
 - [ ] **Single worker thread** — search blocks directory loads, no cancel; separate search thread + cancel flag
 - [ ] **Blocking file ops** — paste/trash run on UI thread; move to worker with progress (see Task manager UI)
@@ -979,7 +977,7 @@ When creating pull requests:
 - [x] **Directory copy** — recursive copy on paste (`fileops::copy_recursive`)
 - [ ] **Undo** — for rename/move/trash
 - [ ] **Paste conflict prompt** — overwrite/skip/rename choice (currently always auto-renames)
-- [ ] **Delete error detail** — failures only go to stderr; show which paths failed
+- [x] **Delete error detail** — error message names the failed item and reason
 - [ ] **Open search result at line**
 - [x] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.) — DONE
   - [x] Default bookmarks: h=home, d=Downloads, p=Projects, t=/tmp
@@ -1009,10 +1007,11 @@ When creating pull requests:
 - [x] **Remove dead code** — Audit unused imports and functions
 - [x] **Reduce cloning** — Clone only PathBuf in context menus, not full entry
 - [x] **Fix double-press timer** — Clear stale `last_g_press` properly
-- [ ] **Unused worker shutdown** — `WorkerHandle::shutdown` / `IoCommand::Shutdown` never used (3 build warnings); call from `on_exit`
-- [ ] **Stale `.bak` files** — `src/view/{modals,panels,preview_legacy}.rs.bak`
-- [ ] **`examples/convert_icon.rs` doesn't compile** — resvg API changed; breaks `cargo test` (use `cargo test --bins`)
-- [ ] **Tests + CI** — only config/fileops tests; add fuzzy_match, git parser, sort tests and a GitHub Actions build/clippy/test workflow
+- [x] **Unused worker shutdown** — removed; the worker exits when `command_tx` drops (joining on exit could block on a long search)
+- [x] **Stale `.bak` files** — removed
+- [x] **`examples/convert_icon.rs` doesn't compile** — removed with its resvg/usvg/tiny-skia deps (source SVG no longer exists)
+- [x] **CI** — `.github/workflows/ci.yml`: fmt, build, test, clippy
+- [ ] **More tests** — fuzzy_match; clippy still has 9 warnings (not yet `-D warnings`)
 - [ ] **Move file ops out of `app.rs`** — into an `ops.rs` for testability
 
 ## Low: Additional Features

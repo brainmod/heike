@@ -1,4 +1,4 @@
-use crate::entry::{FileEntry, GitStatus};
+use crate::entry::{natural_cmp, FileEntry, GitStatus};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -25,7 +25,7 @@ pub fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<FileEntry>, 
         if a.is_dir != b.is_dir {
             return b.is_dir.cmp(&a.is_dir);
         }
-        a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        natural_cmp(&a.name, &b.name)
     });
     Ok(entries)
 }
