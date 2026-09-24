@@ -3,12 +3,18 @@
 use crate::entry::FileEntry;
 use crate::view::preview::handler::{PreviewContext, PreviewHandler};
 use eframe::egui;
+use std::sync::Mutex;
 
-pub struct ImagePreviewHandler;
+pub struct ImagePreviewHandler {
+    // URI of the image shown last, so its decoded texture can be freed on change
+    last_uri: Mutex<Option<String>>,
+}
 
 impl ImagePreviewHandler {
     pub fn new() -> Self {
-        Self
+        Self {
+            last_uri: Mutex::new(None),
+        }
     }
 
     fn is_image_extension(ext: &str) -> bool {
@@ -58,6 +64,14 @@ impl PreviewHandler for ImagePreviewHandler {
         _context: &PreviewContext,
     ) -> Result<(), String> {
         let uri = Self::path_to_file_uri(&entry.path);
+        {
+            let mut last_uri = self.last_uri.lock().unwrap_or_else(|e| e.into_inner());
+            if last_uri.as_deref() != Some(uri.as_str()) {
+                if let Some(old) = last_uri.replace(uri.clone()) {
+                    ui.ctx().forget_image(&old);
+                }
+            }
+        }
         egui::ScrollArea::vertical()
             .id_salt("preview_img")
             .auto_shrink([false, false])

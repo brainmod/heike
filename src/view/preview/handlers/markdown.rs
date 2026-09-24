@@ -2,7 +2,7 @@
 
 use crate::entry::FileEntry;
 use crate::style;
-use crate::view::preview::handler::{PreviewContext, PreviewHandler};
+use crate::view::preview::handler::{show_loading, PreviewContext, PreviewHandler};
 use eframe::egui;
 use pulldown_cmark::{Event as MarkdownEvent, HeadingLevel, Parser, Tag, TagEnd};
 use std::fs;
@@ -46,29 +46,17 @@ impl PreviewHandler for MarkdownPreviewHandler {
             return Ok(());
         }
 
-        // Try to get cached content first
-        let cached_content = {
-            let cache = context.preview_cache.borrow();
-            cache.get(&entry.path, entry.modified)
+        let Some(content) = context
+            .preview_cache
+            .borrow_mut()
+            .load(ui.ctx(), entry, |entry| {
+                fs::read_to_string(&entry.path).map_err(|e| format!("Failed to read file: {}", e))
+            })
+        else {
+            show_loading(ui);
+            return Ok(());
         };
-
-        let content = if let Some(cached) = cached_content {
-            // Cache hit - use cached content
-            cached
-        } else {
-            // Cache miss - read from disk
-            let content = fs::read_to_string(&entry.path)
-                .map_err(|e| format!("Failed to read file: {}", e))?;
-
-            // Store in cache for future use
-            context.preview_cache.borrow_mut().insert(
-                entry.path.clone(),
-                content.clone(),
-                entry.modified,
-            );
-
-            content
-        };
+        let content = content?;
 
         egui::ScrollArea::vertical()
             .id_salt("preview_md")

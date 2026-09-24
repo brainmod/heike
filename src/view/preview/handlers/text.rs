@@ -3,17 +3,96 @@
 use crate::entry::FileEntry;
 use crate::io::directory::is_likely_binary;
 use crate::style;
-use crate::view::preview::handler::{PreviewContext, PreviewHandler};
+use crate::view::preview::handler::{show_loading, PreviewContext, PreviewHandler};
 use eframe::egui;
 use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::SystemTime;
 use syntect::easy::HighlightLines;
 use syntect::util::LinesWithEndings;
 
-pub struct TextPreviewHandler;
+struct Highlighted {
+    path: PathBuf,
+    modified: SystemTime,
+    theme: style::Theme,
+    job: egui::text::LayoutJob,
+    total_lines: usize,
+}
+
+pub struct TextPreviewHandler {
+    // Last binary check, so can_preview doesn't read the file every frame
+    binary_check: Mutex<Option<(PathBuf, SystemTime, bool)>>,
+    highlighted: Mutex<Option<Highlighted>>,
+}
 
 impl TextPreviewHandler {
     pub fn new() -> Self {
-        Self
+        Self {
+            binary_check: Mutex::new(None),
+            highlighted: Mutex::new(None),
+        }
+    }
+
+    fn is_binary(&self, entry: &FileEntry) -> bool {
+        let mut check = self.binary_check.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((path, modified, binary)) = check.as_ref() {
+            if *path == entry.path && *modified == entry.modified {
+                return *binary;
+            }
+        }
+        let binary = is_likely_binary(&entry.path);
+        *check = Some((entry.path.clone(), entry.modified, binary));
+        binary
+    }
+
+    fn highlight(entry: &FileEntry, content: &str, context: &PreviewContext) -> Highlighted {
+        let syntax = context
+            .syntax_set
+            .find_syntax_by_extension(&entry.extension)
+            .or_else(|| context.syntax_set.find_syntax_by_first_line(content))
+            .unwrap_or_else(|| context.syntax_set.find_syntax_plain_text());
+
+        let theme_name = if context.theme == style::Theme::Dark {
+            "base16-ocean.dark"
+        } else {
+            "base16-ocean.light"
+        };
+        let theme = &context.theme_set.themes[theme_name];
+        let mut highlighter = HighlightLines::new(syntax, theme);
+        let mut job = egui::text::LayoutJob::default();
+
+        // Only highlight up to MAX_HIGHLIGHTED_LINES
+        for line in LinesWithEndings::from(content).take(Self::MAX_HIGHLIGHTED_LINES) {
+            let ranges = highlighter
+                .highlight_line(line, context.syntax_set)
+                .unwrap_or_default();
+
+            for (style, text) in ranges {
+                let color = egui::Color32::from_rgb(
+                    style.foreground.r,
+                    style.foreground.g,
+                    style.foreground.b,
+                );
+                job.append(
+                    text,
+                    0.0,
+                    egui::TextFormat {
+                        font_id: egui::FontId::monospace(12.0),
+                        color,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        Highlighted {
+            path: entry.path.clone(),
+            modified: entry.modified,
+            theme: context.theme,
+            job,
+            total_lines: content.lines().count(),
+        }
     }
 
     /// Maximum number of lines to syntax-highlight for performance
@@ -133,7 +212,7 @@ impl PreviewHandler for TextPreviewHandler {
 
     fn can_preview(&self, entry: &FileEntry) -> bool {
         // Only handle non-binary text files
-        Self::is_text_file(entry) && !is_likely_binary(&entry.path)
+        Self::is_text_file(entry) && !self.is_binary(entry)
     }
 
     fn render(
@@ -158,57 +237,40 @@ impl PreviewHandler for TextPreviewHandler {
             return Ok(());
         }
 
-        // Try to get cached content first
-        let cached_content = {
-            let cache = context.preview_cache.borrow();
-            cache.get(&entry.path, entry.modified)
+        let Some(content) = context
+            .preview_cache
+            .borrow_mut()
+            .load(ui.ctx(), entry, |entry| {
+                let data = fs::read(&entry.path).map_err(|e| format!("Read error: {}", e))?;
+                Ok(String::from_utf8_lossy(&data).into_owned())
+            })
+        else {
+            show_loading(ui);
+            return Ok(());
         };
+        let content = content?;
 
-        let content = if let Some(cached) = cached_content {
-            // Cache hit - use cached content
-            cached
-        } else {
-            // Cache miss - read from disk
-            let data = fs::read(&entry.path).map_err(|e| format!("Read error: {}", e))?;
-            let content = String::from_utf8_lossy(&data).to_string();
-
-            // Store in cache for future use
-            context.preview_cache.borrow_mut().insert(
-                entry.path.clone(),
-                content.clone(),
-                entry.modified,
-            );
-
-            content
+        // Syntax highlighting is expensive: do it once per (file, mtime, theme)
+        let mut highlighted = self.highlighted.lock().unwrap_or_else(|e| e.into_inner());
+        let is_current = highlighted.as_ref().is_some_and(|h| {
+            h.path == entry.path && h.modified == entry.modified && h.theme == context.theme
+        });
+        if !is_current {
+            *highlighted = Some(Self::highlight(entry, &content, context));
+        }
+        let Some(highlighted) = highlighted.as_ref() else {
+            return Ok(());
         };
-
-        let syntax = context
-            .syntax_set
-            .find_syntax_by_extension(&entry.extension)
-            .or_else(|| context.syntax_set.find_syntax_by_first_line(&content))
-            .unwrap_or_else(|| context.syntax_set.find_syntax_plain_text());
-
-        let theme_name = if context.theme == style::Theme::Dark {
-            "base16-ocean.dark"
-        } else {
-            "base16-ocean.light"
-        };
-        let theme = &context.theme_set.themes[theme_name];
-
-        // Count total lines and check if we need to truncate
-        let all_lines: Vec<&str> = content.lines().collect();
-        let total_lines = all_lines.len();
-        let is_truncated = total_lines > Self::MAX_HIGHLIGHTED_LINES;
 
         // Show truncation warning if needed
-        if is_truncated {
+        if highlighted.total_lines > Self::MAX_HIGHLIGHTED_LINES {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("⚠").color(egui::Color32::YELLOW));
                 ui.label(
                     egui::RichText::new(format!(
                         "Large file: showing first {} of {} lines for performance",
                         Self::MAX_HIGHLIGHTED_LINES,
-                        total_lines
+                        highlighted.total_lines
                     ))
                     .italics(),
                 );
@@ -222,41 +284,7 @@ impl PreviewHandler for TextPreviewHandler {
             .max_height(ui.available_height())
             .show(ui, |ui| {
                 ui.set_max_width(ui.available_width());
-                let mut highlighter = HighlightLines::new(syntax, theme);
-
-                let mut job = egui::text::LayoutJob::default();
-
-                // Only highlight up to MAX_HIGHLIGHTED_LINES
-                let lines_to_highlight = if is_truncated {
-                    Self::MAX_HIGHLIGHTED_LINES
-                } else {
-                    total_lines
-                };
-
-                for line in LinesWithEndings::from(content.as_ref()).take(lines_to_highlight) {
-                    let ranges = highlighter
-                        .highlight_line(line, context.syntax_set)
-                        .unwrap_or_default();
-
-                    for (style, text) in ranges {
-                        let color = egui::Color32::from_rgb(
-                            style.foreground.r,
-                            style.foreground.g,
-                            style.foreground.b,
-                        );
-                        job.append(
-                            text,
-                            0.0,
-                            egui::TextFormat {
-                                font_id: egui::FontId::monospace(12.0),
-                                color,
-                                ..Default::default()
-                            },
-                        );
-                    }
-                }
-
-                ui.label(job);
+                ui.label(highlighted.job.clone());
             });
 
         Ok(())

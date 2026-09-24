@@ -1,4 +1,5 @@
 pub mod directory;
+pub mod fileops;
 pub mod search;
 pub mod worker;
 

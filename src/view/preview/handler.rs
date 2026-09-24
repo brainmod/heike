@@ -64,3 +64,10 @@ pub trait PreviewHandler: Send + Sync {
         true
     }
 }
+
+/// Placeholder shown while a background preview load is in progress
+pub fn show_loading(ui: &mut egui::Ui) {
+    ui.centered_and_justified(|ui| {
+        ui.spinner();
+    });
+}

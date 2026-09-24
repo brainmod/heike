@@ -1,7 +1,7 @@
 // Audio metadata preview handler
 
 use crate::entry::FileEntry;
-use crate::view::preview::handler::{PreviewContext, PreviewHandler};
+use crate::view::preview::handler::{show_loading, PreviewContext, PreviewHandler};
 use eframe::egui;
 use id3::TagLike;
 
@@ -77,24 +77,14 @@ impl PreviewHandler for AudioPreviewHandler {
             return Ok(());
         }
 
-        // Try to get cached metadata
-        let cached_content = {
-            let cache = context.preview_cache.borrow();
-            cache.get(&entry.path, entry.modified)
-        };
-
-        let metadata = if let Some(cached) = cached_content {
-            Ok(cached)
-        } else {
-            let result = Self::extract_metadata(entry);
-            if let Ok(ref content) = result {
-                context.preview_cache.borrow_mut().insert(
-                    entry.path.clone(),
-                    content.clone(),
-                    entry.modified,
-                );
-            }
-            result
+        let Some(metadata) =
+            context
+                .preview_cache
+                .borrow_mut()
+                .load(ui.ctx(), entry, Self::extract_metadata)
+        else {
+            show_loading(ui);
+            return Ok(());
         };
 
         match metadata {

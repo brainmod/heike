@@ -1,6 +1,6 @@
 use crate::config::{BookmarksConfig, Config};
 use crate::entry::FileEntry;
-use crate::io::{fuzzy_match, spawn_worker, IoCommand, IoResult};
+use crate::io::{fileops, fuzzy_match, spawn_worker, IoCommand, IoResult};
 use crate::state::{
     AppMode, ClipboardOp, EntryState, ModeState, NavigationState, SelectionState, TabsManager,
     UIState,
@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, SyncSender};
 use std::time::{Duration, Instant};
 use syntect::highlighting::ThemeSet;
@@ -67,6 +67,11 @@ pub struct Heike {
     // Parent directory cache to avoid redundant reads
     pub cached_parent_path: Option<PathBuf>,
     pub cached_show_hidden: bool,
+
+    // Per-frame work guards
+    applied_theme: Option<Theme>,
+    last_filter_query: Option<String>,
+    last_saved_config: String,
 }
 impl Heike {
     pub fn new(
@@ -156,6 +161,9 @@ impl Heike {
             preview_cache: RefCell::new(view::PreviewCache::new()),
             cached_parent_path: None,
             cached_show_hidden: false,
+            applied_theme: None,
+            last_filter_query: None,
+            last_saved_config: toml::to_string_pretty(&config).unwrap_or_default(),
         };
 
         app.request_refresh();
@@ -489,7 +497,11 @@ impl Heike {
                             .iter_mut()
                             .find(|e| &e.path == path)
                         {
-                            *entry = updated_entry.clone();
+                            let git_status = entry.git_status.take();
+                            *entry = FileEntry {
+                                git_status,
+                                ..updated_entry.clone()
+                            };
                         }
                         // Update in visible_entries
                         if let Some(entry) = self
@@ -498,7 +510,11 @@ impl Heike {
                             .iter_mut()
                             .find(|e| &e.path == path)
                         {
-                            *entry = updated_entry.clone();
+                            let git_status = entry.git_status.take();
+                            *entry = FileEntry {
+                                git_status,
+                                ..updated_entry.clone()
+                            };
                         }
                         // Update in parent_entries
                         if let Some(entry) = self
@@ -507,7 +523,11 @@ impl Heike {
                             .iter_mut()
                             .find(|e| &e.path == path)
                         {
-                            *entry = updated_entry;
+                            let git_status = entry.git_status.take();
+                            *entry = FileEntry {
+                                git_status,
+                                ..updated_entry
+                            };
                         }
                     }
                 }
@@ -556,6 +576,24 @@ impl Heike {
                 IoResult::ParentLoaded(entries) => {
                     self.entries.parent_entries = entries;
                 }
+                IoResult::GitStatusLoaded { path, statuses } => {
+                    let targets: Vec<&mut Vec<FileEntry>> = if path == self.navigation.current_path
+                    {
+                        vec![
+                            &mut self.entries.all_entries,
+                            &mut self.entries.visible_entries,
+                        ]
+                    } else if self.navigation.current_path.parent() == Some(path.as_path()) {
+                        vec![&mut self.entries.parent_entries]
+                    } else {
+                        continue;
+                    };
+                    for entries in targets {
+                        for entry in entries.iter_mut() {
+                            entry.git_status = statuses.get(&entry.name).cloned();
+                        }
+                    }
+                }
                 IoResult::SearchCompleted(results) => {
                     self.ui.search_in_progress = false;
                     let result_count = results.len();
@@ -584,9 +622,12 @@ impl Heike {
                     self.ui.search_files_skipped = files_skipped;
                     self.ui.search_errors = errors;
                 }
+                IoResult::SearchError(msg) => {
+                    self.ui.search_in_progress = false;
+                    self.ui.set_error(msg);
+                }
                 IoResult::Error(msg) => {
                     self.ui.is_loading = false;
-                    self.ui.search_in_progress = false;
                     self.ui.set_error(msg);
                     self.entries.all_entries.clear();
                     self.entries.visible_entries.clear();
@@ -757,29 +798,33 @@ impl Heike {
                 continue;
             }
 
-            if let Some(name) = src.file_name() {
-                let dest = self.navigation.current_path.join(name);
-                if src.is_dir() {
-                    if op == ClipboardOp::Cut {
-                        if let Err(e) = fs::rename(src, &dest) {
-                            errors.push(format!("Move dir failed: {}", e));
-                        } else {
-                            count += 1;
-                        }
-                    } else {
-                        errors.push("Copying directories not supported in  Heike (lite)".into());
-                    }
-                } else if op == ClipboardOp::Copy {
-                    if let Err(e) = fs::copy(src, &dest) {
-                        errors.push(format!("Copy file failed: {}", e));
-                    } else {
-                        count += 1;
-                    }
-                } else if let Err(e) = fs::rename(src, &dest) {
-                    errors.push(format!("Move file failed: {}", e));
-                } else {
-                    count += 1;
-                }
+            let Some(name) = src.file_name() else {
+                continue;
+            };
+            let target = self.navigation.current_path.join(name);
+
+            // Cutting into the directory it already lives in is a no-op
+            if op == ClipboardOp::Cut && target == *src {
+                count += 1;
+                continue;
+            }
+            if src.is_dir() && fileops::is_inside(src, &target) {
+                errors.push(format!(
+                    "Cannot paste {} into itself",
+                    name.to_string_lossy()
+                ));
+                continue;
+            }
+
+            // Never overwrite: pick "name (N).ext" if the target exists
+            let dest = fileops::unique_destination(&target);
+            let result = match op {
+                ClipboardOp::Copy => fileops::copy_recursive(src, &dest),
+                ClipboardOp::Cut => fileops::move_path(src, &dest),
+            };
+            match result {
+                Ok(()) => count += 1,
+                Err(e) => errors.push(format!("{}: {}", name.to_string_lossy(), e)),
             }
         }
 
@@ -840,10 +885,19 @@ impl Heike {
         if let Some(idx) = self.selection.selected_index {
             if let Some(entry) = self.entries.visible_entries.get(idx) {
                 let new_name = self.mode.command_buffer.trim();
-                if !new_name.is_empty() {
+                if new_name.is_empty() || entry.name == new_name {
+                    // Nothing to do
+                } else if let Err(e) = fileops::validate_file_name(new_name) {
+                    self.ui.set_error(e);
+                } else {
                     if let Some(parent) = entry.path.parent() {
                         let new_path = parent.join(new_name);
-                        if let Err(e) = fs::rename(&entry.path, &new_path) {
+                        if fs::symlink_metadata(&new_path).is_ok()
+                            && !is_same_file(&entry.path, &new_path)
+                        {
+                            self.ui
+                                .set_error(format!("Rename failed: {} already exists", new_name));
+                        } else if let Err(e) = fs::rename(&entry.path, &new_path) {
                             self.ui.set_error(format!("Rename failed: {}", e));
                         } else {
                             self.ui.set_info("Renamed successfully".into());
@@ -916,9 +970,12 @@ impl Heike {
                 return;
             }
 
-            // Validation: no empty names
-            if new_names.iter().any(|n| n.trim().is_empty()) {
-                self.ui.set_error("Empty filename not allowed".into());
+            // Validation: no empty names or path separators
+            if let Some(err) = new_names
+                .iter()
+                .find_map(|n| fileops::validate_file_name(n.trim()).err())
+            {
+                self.ui.set_error(err);
                 return;
             }
 
@@ -950,7 +1007,8 @@ impl Heike {
                     }
 
                     // Check if target already exists (unless it's a case-only change)
-                    if new_path.exists() && new_path != *old_path {
+                    if fs::symlink_metadata(&new_path).is_ok() && !is_same_file(old_path, &new_path)
+                    {
                         errors.push(format!("{}: target already exists", new_name));
                         continue;
                     }
@@ -1029,7 +1087,12 @@ impl Heike {
         // Update enabled previews
         self.config.previews.enabled = self.preview_registry.enabled_handler_names();
 
-        let _ = self.config.save();
+        // Only write the file when something actually changed
+        if let Ok(serialized) = toml::to_string_pretty(&self.config) {
+            if serialized != self.last_saved_config && self.config.save().is_ok() {
+                self.last_saved_config = serialized;
+            }
+        }
         self.ui.last_settings_save = Instant::now();
     }
 
@@ -1167,10 +1230,13 @@ impl Heike {
 
 impl eframe::App for Heike {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Apply theme
-        match self.ui.theme {
-            Theme::Light => ctx.set_visuals(egui::Visuals::light()),
-            Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+        // Apply theme (only when it changes; set_visuals restyles everything)
+        if self.applied_theme != Some(self.ui.theme) {
+            match self.ui.theme {
+                Theme::Light => ctx.set_visuals(egui::Visuals::light()),
+                Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+            }
+            self.applied_theme = Some(self.ui.theme);
         }
 
         // Auto-dismiss old messages
@@ -1193,12 +1259,18 @@ impl eframe::App for Heike {
             }
         });
 
+        // Re-filter only when the query changes, not every frame
         if self.mode.mode == AppMode::Filtering {
-            let old_len = self.entries.visible_entries.len();
-            self.apply_filter();
-            if self.entries.visible_entries.len() != old_len {
-                self.selection.last_selection_change = Instant::now();
+            if self.last_filter_query.as_ref() != Some(&self.mode.command_buffer) {
+                self.last_filter_query = Some(self.mode.command_buffer.clone());
+                let old_len = self.entries.visible_entries.len();
+                self.apply_filter();
+                if self.entries.visible_entries.len() != old_len {
+                    self.selection.last_selection_change = Instant::now();
+                }
             }
+        } else {
+            self.last_filter_query = None;
         }
 
         let next_navigation = std::cell::RefCell::new(None);
@@ -1674,5 +1746,14 @@ impl eframe::App for Heike {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.save_settings();
+    }
+}
+
+/// True if both paths refer to the same file (e.g. case-only rename on a
+/// case-insensitive filesystem)
+fn is_same_file(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }

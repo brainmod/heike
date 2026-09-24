@@ -17,12 +17,12 @@
 ```
 heike/
 ├── src/
-│   ├── main.rs             # Entry point (76 lines)
-│   ├── app.rs              # Heike struct, update loop (1623 lines)
-│   ├── entry.rs            # FileEntry struct (203 lines)
+│   ├── main.rs             # Entry point, CLI path arg (114 lines)
+│   ├── app.rs              # Heike struct, update loop, file ops (~1700 lines)
+│   ├── entry.rs            # FileEntry struct, GitStatus (215 lines)
 │   ├── config.rs           # Configuration system (TOML)
-│   ├── input.rs            # Keyboard handling (575 lines)
-│   ├── style.rs            # Theme, layout constants (69 lines)
+│   ├── input.rs            # Keyboard handling (628 lines)
+│   ├── style.rs            # Theme, layout constants (54 lines)
 │   ├── state/
 │   │   ├── mod.rs          # State module exports
 │   │   ├── mode.rs         # AppMode enum
@@ -37,13 +37,14 @@ heike/
 │   │   └── ui.rs           # UIState
 │   ├── io/
 │   │   ├── mod.rs          # IO module exports
-│   │   ├── directory.rs    # Directory reading (62 lines)
-│   │   ├── search.rs       # Content search (361 lines)
-│   │   └── worker.rs       # Async worker thread (78 lines)
+│   │   ├── directory.rs    # Directory reading + git status (opt-in)
+│   │   ├── fileops.rs      # Safe copy/move/rename helpers (+ tests)
+│   │   ├── search.rs       # Content search (423 lines)
+│   │   └── worker.rs       # Async worker thread
 │   └── view/
 │       ├── mod.rs          # View module exports
-│       ├── panels.rs       # Miller columns rendering (420 lines)
-│       ├── modals.rs       # Dialogs/popups (312 lines)
+│       ├── panels.rs       # Miller columns rendering (352 lines)
+│       ├── modals.rs       # Dialogs/popups (304 lines)
 │       └── preview/
 │           ├── mod.rs      # Preview system core
 │           ├── handler.rs  # PreviewHandler trait
@@ -296,6 +297,24 @@ for entry in &self.clipboard {
 }
 ```
 
+### 4b. Never Overwrite on File Operations
+
+**ALWAYS route copy/move/rename through `io::fileops`:**
+
+```rust
+// ✅ CORRECT
+fileops::validate_file_name(new_name)?;             // rejects "", ".", "..", "/", "\\"
+let dest = fileops::unique_destination(&target);    // "name (1).ext" if taken
+fileops::copy_recursive(src, &dest)?;               // files, dirs, symlinks
+fileops::move_path(src, &dest)?;                    // falls back to copy+delete across filesystems
+
+// ❌ WRONG
+fs::copy(src, &dest)?;  // src == dest truncates the file to 0 bytes; silently overwrites
+fs::rename(src, &parent.join(user_input))?;  // overwrites; "../x" escapes the directory
+```
+
+Also reject pasting a directory into itself (`fileops::is_inside`).
+
 ### 5. Message Auto-Dismiss
 
 **ALWAYS set timestamp for messages:**
@@ -312,6 +331,24 @@ if let Some((_, time)) = &self.error_message {
     }
 }
 ```
+
+### 5b. Preview Loading
+
+**NEVER read or parse files inside `render()`** — it runs every frame on the UI thread. Use the background loader, which caches by path + mtime:
+
+```rust
+let Some(content) = context
+    .preview_cache
+    .borrow_mut()
+    .load(ui.ctx(), entry, Self::extract_contents) // fn(&FileEntry) -> Result<String, String>
+else {
+    show_loading(ui);  // repaint is requested when the load finishes
+    return Ok(());
+};
+let content = content?;  // Arc<str>
+```
+
+Cache any other expensive per-file work (e.g. syntax highlighting) in a `Mutex` on the handler, keyed by path + mtime.
 
 ### 6. Preview Size Guards
 
@@ -651,11 +688,11 @@ See the full task list at the end of this document. Key priorities:
 | Syntax highlighting | ✅ Done |
 | Archive preview | ✅ Done |
 | Content search | ✅ Done |
-| Tabs | ❌ Todo |
-| Bulk rename | ❌ Todo |
-| Trash bin | ❌ Todo |
-| Bookmarks | ❌ Todo |
-| Git status | ❌ Todo |
+| Tabs | ✅ Done |
+| Bulk rename | ✅ Done |
+| Trash bin | ✅ Done |
+| Bookmarks | ✅ Done |
+| Git status | ✅ Done (via `git` CLI) |
 | Task manager | ❌ Todo |
 | Plugin system | ❌ Todo |
 
@@ -676,6 +713,9 @@ See the full task list at the end of this document. Key priorities:
 
 1. **Delete file** → selection moves to next/previous item
 2. **Copy/paste** → original files preserved, new files created
+2a. **Paste into same dir / onto existing name** → creates `name (1).ext`, never overwrites or truncates
+2b. **Copy/paste a directory** → full tree copied; pasting a dir into itself is refused
+2c. **Rename to existing name or with `/` / `..`** → error, nothing changes
 3. **Cut/paste** → files moved, originals removed
 4. **Rename** → selection stays on renamed item
 5. **Create directory** → new dir appears and is selected
@@ -856,6 +896,13 @@ When creating pull requests:
 - [x] **Mouse scroll decoupling** — Scrolling via mouse should not recenter view on selected item; only keyboard nav/scroll should recenter (enhanced edge case fix: reset disable_autoscroll on navigation)
 - [x] **Parent directory selection** — Navigating to parent should restore previous folder as active (selected) item (implemented using pending_selection_path; also fixed selection memory fallback in apply_filter())
 - [x] **RefCell borrow panic in preview cache** — Fixed preview handlers to properly scope immutable borrows before attempting mutable borrows
+- [x] **Copy-paste into same directory truncated the file to 0 bytes** — `fs::copy(src, src)`; paste now uses `fileops::unique_destination`
+- [x] **Paste/rename silently overwrote existing files** — conflict check + auto-suffix on paste, error on rename
+- [x] **Rename accepted path separators / `..`** — `fileops::validate_file_name` (single and bulk rename)
+- [x] **Cut across filesystems failed** — `fileops::move_path` falls back to copy + delete
+- [x] **Search error cleared the file listing** — separate `IoResult::SearchError`
+- [x] **Git status parsing** — now `--porcelain=v1 -z` (renames, spaces, quoted names), with tests
+- [ ] **Case-sensitive name sort** — `sort_visible_entries` uses `a.name.cmp`, loader sorts case-insensitively; no natural sort
 
 ## High: Layout Fixes
 
@@ -897,6 +944,19 @@ When creating pull requests:
 - [x] **Preview caching** — Memoize preview content by path + modified time
 - [x] **Parent directory caching** — Skip re-read when parent unchanged
 - [x] **Lazy archive preview** — Don't iterate full archive for count
+- [x] **Directory preview re-read every frame** — was calling `read_directory` (+2 `git` spawns) on the UI thread per frame; now cached by (path, mtime, show_hidden) and skips git
+- [x] **Git status cost** — repo root found by walking up for `.git` (no spawn outside repos), one `git status` per load, sent as a separate `IoResult::GitStatusLoaded` after the listing so it never delays it
+- [x] **Filter mode re-filters every frame** — now only when the query changes (`last_filter_query`)
+- [x] **Settings saved every 10s unconditionally** — still checked every 10s, but written only if the serialized config changed
+- [x] **`set_visuals` every frame** — only on theme change (`applied_theme`)
+- [x] **Heavy previews on UI thread** — all file reads/parsing (text, markdown, PDF, DOCX, XLSX, archive, audio) run on background threads via `PreviewCache::load`, spinner meanwhile
+- [x] **Syntax highlighting every frame** — text preview re-highlighted 1000 lines and cloned the file content per frame; now highlighted `LayoutJob` cached per (path, mtime, theme), cache stores `Arc<str>`
+- [x] **Binary check every frame** — `TextPreviewHandler::can_preview` read 8KB per frame; now cached per (path, mtime)
+- [x] **Image textures never freed** — previous image `forget_image`d on change
+- [ ] **Permissions stat per frame** — `get_permissions_string` calls `fs::metadata` each frame; store mode in `FileEntry`
+- [ ] **Git status on the shared worker** — a slow `git status` in a huge repo still delays the next queued load
+- [ ] **Single worker thread** — search blocks directory loads, no cancel; separate search thread + cancel flag
+- [ ] **Blocking file ops** — paste/trash run on UI thread; move to worker with progress (see Task manager UI)
 
 ## Medium: UX Features
 
@@ -915,7 +975,12 @@ When creating pull requests:
     - [x] Selection count in status bar — DONE (shows selected count with size)
     - [x] Visual distinction between cursor and selected items — DONE (yellow ▶ and ✓ prefix)
   - [ ] Additional vim binds that make sense for file navigation (e.g., `o` to open in new tab)
-- [ ] **Bulk rename** — vidir-style multi-file rename mode
+- [x] **Bulk rename** — vidir-style multi-file rename mode
+- [x] **Directory copy** — recursive copy on paste (`fileops::copy_recursive`)
+- [ ] **Undo** — for rename/move/trash
+- [ ] **Paste conflict prompt** — overwrite/skip/rename choice (currently always auto-renames)
+- [ ] **Delete error detail** — failures only go to stderr; show which paths failed
+- [ ] **Open search result at line**
 - [x] **Bookmarks** — `g` prefix shortcuts (gd=Downloads, gh=Home, etc.) — DONE
   - [x] Default bookmarks: h=home, d=Downloads, p=Projects, t=/tmp
   - [x] Configurable via config.toml
@@ -944,6 +1009,11 @@ When creating pull requests:
 - [x] **Remove dead code** — Audit unused imports and functions
 - [x] **Reduce cloning** — Clone only PathBuf in context menus, not full entry
 - [x] **Fix double-press timer** — Clear stale `last_g_press` properly
+- [ ] **Unused worker shutdown** — `WorkerHandle::shutdown` / `IoCommand::Shutdown` never used (3 build warnings); call from `on_exit`
+- [ ] **Stale `.bak` files** — `src/view/{modals,panels,preview_legacy}.rs.bak`
+- [ ] **`examples/convert_icon.rs` doesn't compile** — resvg API changed; breaks `cargo test` (use `cargo test --bins`)
+- [ ] **Tests + CI** — only config/fileops tests; add fuzzy_match, git parser, sort tests and a GitHub Actions build/clippy/test workflow
+- [ ] **Move file ops out of `app.rs`** — into an `ops.rs` for testability
 
 ## Low: Additional Features
 
@@ -953,13 +1023,13 @@ When creating pull requests:
   - [x] Theme selection (dark/light mode)
   - [x] Panel widths (parent/preview pane sizing)
   - [x] UI preferences (show_hidden, sort options, dirs_first)
-  - [ ] Font override (path to custom TTF file) — Future enhancement
+  - [x] Font override (`font.custom_font_path`)
   - [ ] Keybinding customization (TOML-based) — Future enhancement
   - [ ] Custom color overrides — Future enhancement
-- [ ] **Settings persistence** — Save panel widths, theme, show_hidden to TOML
-- [ ] **CLI path argument** — Accept starting directory as arg
+- [x] **Settings persistence** — Save panel widths, theme, show_hidden to TOML
+- [x] **CLI path argument** — Accept starting directory as arg
 - [ ] **zoxide integration** — Jump to frecent directories
-- [ ] **Git status indicators** — Show modified/untracked/ignored status
+- [x] **Git status indicators** — Show modified/untracked/ignored status
 - [ ] **Custom opener rules** — Config file for extension → application mapping
 
 ## Backlog: Future Considerations
@@ -1015,65 +1085,28 @@ When creating pull requests:
 
 ---
 
-*Last updated: 2025-12-14*
+*Last updated: 2026-09-24*
 
-### Previous Session (Performance optimizations + polish):
+### Latest Session (Audit + data-safety and preview-lag fixes)
 
-  **Performance Optimizations:**
-  - Implemented preview caching with LRU eviction (100 entries)
-    - Cache validation using path + mtime
-    - Integrated into TextPreviewHandler and MarkdownPreviewHandler
-  - Implemented virtual scrolling for code preview
-    - 1000-line limit for syntax highlighting
-    - Performance: ~200ms → ~20ms for large files
-  - Implemented parent directory caching
-    - Avoids redundant disk I/O when navigating siblings
-    - Cache invalidation on parent directory changes
-  - Enhanced search progress tracking
-    - Detailed statistics: files searched, skipped, errors
-    - Real-time progress display in search modal
+  **Audit findings (open items are tracked in the task list above):**
+  - Data safety: same-dir copy-paste truncated files, paste/rename overwrote silently, rename allowed `../`
+  - Performance: directory preview re-read + 2 git spawns per frame on the UI thread; per-frame
+    filter/sort, settings save and `set_visuals`; heavy previews and file ops on the UI thread
+  - Health: 3 dead-code warnings, broken example, 6 unit tests, no CI
 
-  **Code Quality & Polish:**
-  - Refactored message handling for consistency
-    - All code now uses UIState::set_error() and set_info() helpers
-    - Centralized message expiration logic in clear_expired_messages()
-    - Improves maintainability and reduces duplication
-  - Removed dead code and unused imports
-  - Reduced unnecessary cloning in context menus
-  - Fixed stale double-press timer issue
-  - Added sort options display to status bar
-  - Added keyboard shortcuts to UI (Help modal Close button)
+  **Fixed this session:**
+  - New `src/io/fileops.rs`: `validate_file_name`, `unique_destination`, `copy_recursive`,
+    `move_path` (cross-filesystem fallback), `is_inside` — with unit tests
+  - Paste never overwrites (auto `name (N).ext`), copies directories, refuses dir-into-itself
+  - Single + bulk rename validate names and refuse existing targets (case-only renames allowed)
+  - `read_directory(path, show_hidden, with_git)` — preview skips git
+  - Directory preview cached by (path, mtime, show_hidden)
+  - `IoResult::SearchError` no longer wipes the listing
 
-  **Documentation:**
-  - Updated CLAUDE.md task list with completion status
-  - All Medium: Performance tasks completed
-  - All Low: Code Quality tasks completed
-  - Most Medium: Error Handling tasks completed
-
-### Current Session (RefCell panic fix + tabs UI implementation):
-
-  **Bug Fixes:**
-  - Fixed RefCell borrow panic in preview cache
-    - Issue: Immutable borrow still active during borrow_mut() call
-    - Solution: Scope immutable borrow to ensure it's dropped before mutable borrow
-    - Affected files: text.rs and markdown.rs preview handlers
-    - Added RefCell borrow pattern to CLAUDE.md conventions
-
-  **New Features:**
-  - Implemented tab bar UI rendering
-    - Custom tab bar with Frame-based tab buttons
-    - Active tab highlighting with visual distinction
-    - Close buttons on individual tabs (disabled for last tab)
-    - Plus button to create new tabs
-    - Horizontal scrolling for many tabs
-    - Click to switch tabs, click × to close
-
-  **Documentation Updates:**
-  - Updated CLAUDE.md with RefCell borrow convention (#9)
-  - Updated architecture section to reflect current module structure
-  - Marked tabs feature as completed (UI now implemented)
-  - Updated version to 0.8.2 (Stability & Tabs update)
-  - Documented completed refactoring progress
-  - Updated README with 0.8.2 version history
-
-*For questions or clarifications, refer to git commit history or ask the repository maintainer.*
+  **Performance batch:**
+  - Background preview loader (`PreviewCache::load`) for all file-reading handlers; XLSX converted to it
+  - Cached syntax-highlighted `LayoutJob`, binary check and `Arc<str>` cache (no per-frame 10MB clones)
+  - Git status: no-spawn repo detection, single `-z` spawn, delivered after the listing
+  - Filter recomputed only on query change; `set_visuals` only on theme change; settings written only when changed
+  - Previous image texture freed on change
