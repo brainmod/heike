@@ -4,12 +4,20 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-pub fn read_directory(path: &Path, show_hidden: bool) -> Result<Vec<FileEntry>, std::io::Error> {
+pub fn read_directory(
+    path: &Path,
+    show_hidden: bool,
+    with_git: bool,
+) -> Result<Vec<FileEntry>, std::io::Error> {
     let mut entries = Vec::new();
     let read_dir = fs::read_dir(path)?;
 
-    // Fetch git statuses for the directory
-    let git_statuses = get_git_statuses(path);
+    // Git status spawns two processes, so callers opt in
+    let git_statuses = if with_git {
+        get_git_statuses(path)
+    } else {
+        HashMap::new()
+    };
 
     for entry in read_dir.flatten() {
         let path = entry.path();

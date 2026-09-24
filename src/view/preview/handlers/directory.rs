@@ -5,13 +5,47 @@ use crate::io::directory::read_directory;
 use crate::style;
 use crate::view::preview::handler::{PreviewContext, PreviewHandler};
 use eframe::egui;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
-pub struct DirectoryPreviewHandler;
+type DirCacheEntry = (PathBuf, SystemTime, bool, Arc<Vec<FileEntry>>);
+
+pub struct DirectoryPreviewHandler {
+    // Last previewed directory, keyed by (path, mtime, show_hidden), so the
+    // directory is read once per selection instead of every frame
+    cache: Mutex<Option<DirCacheEntry>>,
+}
 
 impl DirectoryPreviewHandler {
     pub fn new() -> Self {
-        Self
+        Self {
+            cache: Mutex::new(None),
+        }
+    }
+
+    fn entries_for(
+        &self,
+        entry: &FileEntry,
+        show_hidden: bool,
+    ) -> Result<Arc<Vec<FileEntry>>, String> {
+        // Stat the directory itself: its mtime changes when children are added/removed,
+        // which the non-recursive watcher on the current directory does not report
+        let mtime = std::fs::metadata(&entry.path)
+            .and_then(|m| m.modified())
+            .unwrap_or(entry.modified);
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((path, modified, hidden, entries)) = cache.as_ref() {
+            if *path == entry.path && *modified == mtime && *hidden == show_hidden {
+                return Ok(entries.clone());
+            }
+        }
+        let entries = Arc::new(
+            read_directory(&entry.path, show_hidden, false)
+                .map_err(|e| format!("Cannot read directory: {}", e))?,
+        );
+        *cache = Some((entry.path.clone(), mtime, show_hidden, entries.clone()));
+        Ok(entries)
     }
 }
 
@@ -38,8 +72,7 @@ impl PreviewHandler for DirectoryPreviewHandler {
             return Ok(());
         }
 
-        let entries = read_directory(&entry.path, context.show_hidden)
-            .map_err(|e| format!("Cannot read directory: {}", e))?;
+        let entries = self.entries_for(entry, context.show_hidden)?;
 
         let accent = egui::Color32::from_rgb(120, 180, 255);
         let highlighted_index = context.directory_selections.get(&entry.path).copied();

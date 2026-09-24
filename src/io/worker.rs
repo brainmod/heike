@@ -36,6 +36,7 @@ pub enum IoResult {
         errors: usize,
     },
     Error(String),
+    SearchError(String),
 }
 
 /// Worker thread handle for graceful shutdown
@@ -72,7 +73,8 @@ pub fn spawn_worker(ctx: eframe::egui::Context) -> WorkerHandle {
                     // Graceful shutdown - exit the loop
                     break;
                 }
-                IoCommand::LoadDirectory(path, hidden) => match read_directory(&path, hidden) {
+                IoCommand::LoadDirectory(path, hidden) => match read_directory(&path, hidden, true)
+                {
                     Ok(entries) => {
                         let _ = res_tx.send(IoResult::DirectoryLoaded {
                             path: path.clone(),
@@ -83,7 +85,7 @@ pub fn spawn_worker(ctx: eframe::egui::Context) -> WorkerHandle {
                         let _ = res_tx.send(IoResult::Error(e.to_string()));
                     }
                 },
-                IoCommand::LoadParent(path, hidden) => match read_directory(&path, hidden) {
+                IoCommand::LoadParent(path, hidden) => match read_directory(&path, hidden, true) {
                     Ok(entries) => {
                         let _ = res_tx.send(IoResult::ParentLoaded(entries));
                     }
@@ -100,7 +102,7 @@ pub fn spawn_worker(ctx: eframe::egui::Context) -> WorkerHandle {
                         let _ = res_tx.send(IoResult::SearchCompleted(results));
                     }
                     Err(e) => {
-                        let _ = res_tx.send(IoResult::Error(format!("Search error: {}", e)));
+                        let _ = res_tx.send(IoResult::SearchError(format!("Search error: {}", e)));
                     }
                 },
             }
